@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1c1e24"/>
+      <stop offset="100%" stop-color="#121316"/>
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle container -->
+  <rect x="6" y="6" width="116" height="116" rx="26" fill="url(#bg)" stroke="#2b2e38" stroke-width="2"/>
+
+  <!-- Subtle inner border highlight -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="none" stroke="#ffffff0a" stroke-width="1.5"/>
+
+  <!-- Monogram BF (BeamForge) -->
+  <!-- Letter B (Clean White) -->
+  <path fill-rule="evenodd" d="M 28 36 L 50 36 C 58 36 63 39 63 45 C 63 49 60 53 56 55 C 61 57 65 62 65 69 C 65 76 59 82 50 82 L 28 82 Z M 40 46 L 40 53 L 49 53 C 52 53 54 51 54 49.5 C 54 48 52 46 49 46 Z M 40 63 L 40 72 L 50 72 C 54 72 56 70 56 67.5 C 56 65 54 63 50 63 Z" fill="#f3f4f6"/>
+
+  <!-- Letter F (Electric Forge Blue Accent) -->
+  <path d="M 68 36 L 100 36 L 100 46 L 80 46 L 80 55 L 94 55 L 94 64 L 80 64 L 80 82 L 68 82 Z" fill="url(#blueGrad)"/>
+
+  <!-- Speed / Forge accent underline -->
+  <rect x="28" y="90" width="72" height="4" rx="2" fill="url(#blueGrad)"/>
+</svg>

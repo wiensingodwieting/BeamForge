@@ -1,0 +1,978 @@
+import "./fonts/Inter.ttf";
+import { Button, LineEdit, ScrollView, ListView } from "std-widgets.slint";
+
+export struct ModItem {
+    name: string,
+    title: string,
+    category: string,
+    author: string,
+    size_str: string,
+    checked: bool,
+}
+
+export struct PresetItem {
+    name: string,
+    count: int,
+}
+
+// Custom checkbox with check/cross mark
+component CustomCheckbox {
+    in property <bool> checked: false;
+    callback toggled();
+
+    width: 18px;
+    height: 18px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: 4px;
+        border-width: 1.5px;
+        border-color: root.checked ? #4b5563 : #374151;
+        background: root.checked ? #1f222a : transparent;
+
+        TouchArea {
+            clicked => {
+                root.toggled();
+            }
+        }
+
+        if root.checked: Image {
+            source: @image-url("icons/cross.svg");
+            width: 9px;
+            height: 9px;
+            colorize: #9ca3af;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Category filter tabs (All, Cars, Maps, Wheels, Other)
+component CategoryTab {
+    in property <string> text;
+    in property <bool> is_active: false;
+    callback clicked();
+    height: 28px;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+
+        VerticalLayout {
+            spacing: 5px;
+            alignment: center;
+            padding-top: 2px;
+
+            Text {
+                text: root.text;
+                color: root.is_active ? #ffffff : (touch.has-hover ? #f3f4f6 : #9ca3af);
+                font-size: 13px;
+                font-weight: root.is_active ? 600 : 500;
+                horizontal-alignment: center;
+            }
+
+            Rectangle {
+                height: 2px;
+                background: root.is_active ? #3b82f6 : transparent;
+                border-radius: 1px;
+            }
+        }
+    }
+}
+
+// Subfilter tabs (All, Active, Inactive)
+component SubFilterTab {
+    in property <string> text;
+    in property <bool> is_active: false;
+    callback clicked();
+    height: 26px;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+
+        VerticalLayout {
+            spacing: 5px;
+            alignment: center;
+            padding-top: 2px;
+
+            Text {
+                text: root.text;
+                color: root.is_active ? #ffffff : (touch.has-hover ? #f3f4f6 : #9ca3af);
+                font-size: 13px;
+                font-weight: root.is_active ? 600 : 400;
+                horizontal-alignment: center;
+            }
+
+            Rectangle {
+                height: 2px;
+                background: root.is_active ? #3b82f6 : transparent;
+                border-radius: 1px;
+            }
+        }
+    }
+}
+
+// Action button with optional leading icon
+component ActionButton {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> has_icon: false;
+    in property <bool> is_primary: false;
+    callback clicked();
+
+    Rectangle {
+        height: 30px;
+        background: root.is_primary ? (touch.has-hover ? #36579c : #2d4982) : (touch.has-hover ? #25272e : #1e2025);
+        border-width: root.is_primary ? 0px : 1px;
+        border-color: #2b2d35;
+        border-radius: 6px;
+
+        touch := TouchArea {
+            clicked => { root.clicked(); }
+        }
+
+        HorizontalLayout {
+            padding-left: root.is_primary ? 16px : 12px;
+            padding-right: root.is_primary ? 16px : 12px;
+            spacing: 6px;
+            alignment: center;
+
+            if root.has_icon: Image {
+                source: root.icon;
+                width: 14px;
+                height: 14px;
+                colorize: root.is_primary ? #ffffff : (touch.has-hover ? #ffffff : #9ca3af);
+                y: (parent.height - self.height) / 2;
+            }
+
+            Text {
+                text: root.text;
+                color: root.is_primary ? #ffffff : (touch.has-hover ? #f3f4f6 : #d1d5db);
+                font-size: 12px;
+                font-weight: root.is_primary ? 600 : 500;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// Path picker row in settings modal
+component PathField {
+    in property <string> title;
+    in property <string> path_val;
+    callback pick();
+    vertical-stretch: 0;
+
+    Rectangle {
+        background: #141517;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: #26282f;
+
+        VerticalLayout {
+            padding: 10px;
+            spacing: 6px;
+            Text {
+                text: root.title;
+                color: #cbd5e1;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                LineEdit {
+                    text: root.path_val;
+                    font-size: 11px;
+                    read-only: true;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: "Browse...";
+                    clicked => { root.pick(); }
+                }
+            }
+        }
+    }
+}
+
+// Search bar input
+component SearchInput {
+    in-out property <string> text: "";
+    in property <string> placeholder: "Search mods";
+    callback edited(string);
+    height: 38px;
+    vertical-stretch: 0;
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #131416;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: #26282f;
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 10px;
+
+            Image {
+                source: @image-url("icons/search.svg");
+                width: 15px;
+                height: 15px;
+                colorize: #6b7280;
+                y: (parent.height - self.height) / 2;
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                clip: true;
+
+                if input.text == "": Text {
+                    text: root.placeholder;
+                    color: #6b7280;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    x: 0px;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                input := TextInput {
+                    text <=> root.text;
+                    color: #f3f4f6;
+                    font-size: 13px;
+                    single-line: true;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                    edited => {
+                        root.edited(self.text);
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "BeamForge";
+    icon: @image-url("icons/beamforge.svg");
+    preferred-width: 1080px;
+    preferred-height: 720px;
+    min-width: 900px;
+    min-height: 560px;
+    background: #141517;
+    default-font-family: "Inter";
+
+    // State properties
+    in-out property <string> storage_path;
+    in-out property <string> target_path;
+    in-out property <string> server_bin_path;
+    in-out property <string> current_preset: "";
+    in-out property <[PresetItem]> presets;
+    in-out property <[ModItem]> mods;
+    in-out property <string> status_text: "";
+    in-out property <bool> status_is_error: false;
+    in-out property <string> active_category: "All";
+    in-out property <string> sub_filter: "all"; // "all", "active", "inactive"
+    in-out property <int> total_count: 0;
+    in-out property <int> active_count: 0;
+    in-out property <int> inactive_count: 0;
+    in-out property <string> total_size_str: "0 B";
+    in-out property <bool> server_running: false;
+    in-out property <bool> show_settings: false;
+    in-out property <bool> show_new_profile_input: false;
+
+    // Callbacks
+    callback select_preset(string);
+    callback create_preset(string);
+    callback save_preset_by_name(string);
+    callback delete_preset_by_name(string);
+    callback search_changed(string);
+    callback filter_category(string);
+    callback filter_sub(string);
+    callback toggle_mod(string, bool);
+    callback select_all();
+    callback deselect_all();
+    callback refresh_mods();
+    callback apply_mods();
+    callback toggle_server();
+    callback open_server_config();
+    callback open_mod_file(string);
+    callback pick_storage();
+    callback pick_target();
+    callback pick_server_bin();
+    callback toggle_settings();
+    callback toggle_new_profile();
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // Header bar
+        Rectangle {
+            height: 38px;
+            background: #141517;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+
+                // Settings gear
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    y: (parent.height - self.height) / 2;
+                    background: transparent;
+
+                    gear_touch := TouchArea {
+                        clicked => { root.toggle_settings(); }
+                    }
+
+                    Image {
+                        source: @image-url("icons/gear.svg");
+                        width: 17px;
+                        height: 17px;
+                        colorize: gear_touch.has-hover ? #ffffff : #71717a;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: "BeamForge";
+                    color: #d1d5db;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                // Balance spacer
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                }
+            }
+        }
+
+        // Status banner
+        if root.status_text != "": Rectangle {
+            height: 28px;
+            background: root.status_is_error ? #7f1d1d : #1e2638;
+            border-width: 1px;
+            border-color: root.status_is_error ? #ef4444 : #3b82f6;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                alignment: center;
+                Text {
+                    text: root.status_text;
+                    color: #ffffff;
+                    font-size: 12px;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        // Main workspace
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-bottom: 12px;
+            spacing: 12px;
+            vertical-stretch: 1;
+
+            // Sidebar: Profiles & Server control
+            Rectangle {
+                width: 260px;
+                background: #18191d;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: #25272e;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        vertical-stretch: 0;
+
+                        Text {
+                            text: "PROFILES";
+                            color: #9ca3af;
+                            font-size: 12px;
+                            font-weight: 700;
+                            letter-spacing: 0.8px;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        Rectangle {
+                            width: 24px;
+                            height: 24px;
+                            border-radius: 4px;
+                            background: plus_touch.has-hover ? #ffffff15 : transparent;
+
+                            plus_touch := TouchArea {
+                                clicked => { root.toggle_new_profile(); }
+                            }
+
+                            Image {
+                                source: @image-url("icons/plus.svg");
+                                width: 14px;
+                                height: 14px;
+                                colorize: plus_touch.has-hover ? #ffffff : #9ca3af;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // New profile input
+                    if root.show_new_profile_input: HorizontalLayout {
+                        spacing: 6px;
+                        vertical-stretch: 0;
+                        new_prof_input := LineEdit {
+                            placeholder-text: "New profile name...";
+                            font-size: 12px;
+                            horizontal-stretch: 1;
+                            accepted => {
+                                if (self.text != "") {
+                                    root.create_preset(self.text);
+                                    self.text = "";
+                                }
+                            }
+                        }
+                        Button {
+                            text: "Add";
+                            clicked => {
+                                if (new_prof_input.text != "") {
+                                    root.create_preset(new_prof_input.text);
+                                    new_prof_input.text = "";
+                                }
+                            }
+                        }
+                    }
+
+                    // Preset list
+                    if root.presets.length == 0: Rectangle {
+                        vertical-stretch: 1;
+                        Text {
+                            text: "No profiles yet\nClick + to create";
+                            color: #6b7280;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    if root.presets.length > 0: ListView {
+                        vertical-stretch: 1;
+                        for p in root.presets: Rectangle {
+                            width: 100%;
+                            height: 34px;
+                            border-radius: 6px;
+                            background: p.name == root.current_preset ? #2a3854 : (p_touch.has-hover ? #202229 : transparent);
+
+                            p_touch := TouchArea {
+                                clicked => { root.select_preset(p.name); }
+                            }
+
+                            HorizontalLayout {
+                                width: 100%;
+                                padding-left: 10px;
+                                padding-right: 6px;
+                                spacing: 6px;
+
+                                Text {
+                                    text: p.name;
+                                    color: p.name == root.current_preset ? #ffffff : #d1d5db;
+                                    font-size: 13px;
+                                    font-weight: p.name == root.current_preset ? 600 : 500;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+
+                                Rectangle {
+                                    width: 24px;
+                                    height: 24px;
+                                    border-radius: 4px;
+                                    background: save_touch.has-hover ? #ffffff20 : transparent;
+
+                                    save_touch := TouchArea {
+                                        clicked => { root.save_preset_by_name(p.name); }
+                                    }
+
+                                    Image {
+                                        source: @image-url("icons/save.svg");
+                                        width: 14px;
+                                        height: 14px;
+                                        colorize: save_touch.has-hover ? #ffffff : (p.name == root.current_preset ? #cbd5e1 : #6b7280);
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                Rectangle {
+                                    width: 24px;
+                                    height: 24px;
+                                    border-radius: 4px;
+                                    background: trash_touch.has-hover ? #ef444430 : transparent;
+
+                                    trash_touch := TouchArea {
+                                        clicked => { root.delete_preset_by_name(p.name); }
+                                    }
+
+                                    Image {
+                                        source: @image-url("icons/trash.svg");
+                                        width: 14px;
+                                        height: 14px;
+                                        colorize: trash_touch.has-hover ? #ef4444 : (p.name == root.current_preset ? #cbd5e1 : #6b7280);
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Server supervisor section
+                    VerticalLayout {
+                        spacing: 8px;
+                        vertical-stretch: 0;
+
+                        Rectangle {
+                            background: #1b1d22;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: #272930;
+
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 6px;
+
+                                Text {
+                                    text: "BeamMP Server:";
+                                    color: #9ca3af;
+                                    font-size: 11px;
+                                    font-weight: 500;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+
+                                    Rectangle {
+                                        width: 8px;
+                                        height: 8px;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 4px;
+                                        background: root.server_running ? #22c55e : #6b7280;
+                                    }
+
+                                    Text {
+                                        text: root.server_running ? "Running" : "Stopped";
+                                        color: root.server_running ? #4ade80 : #9ca3af;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                    }
+
+                                    Rectangle {
+                                        width: 26px;
+                                        height: 26px;
+                                        border-radius: 5px;
+                                        background: doc_touch.has-hover ? #292d37 : #22242c;
+                                        border-width: 1px;
+                                        border-color: #2e323e;
+
+                                        doc_touch := TouchArea {
+                                            clicked => { root.open_server_config(); }
+                                        }
+
+                                        Image {
+                                            source: @image-url("icons/document.svg");
+                                            width: 13px;
+                                            height: 13px;
+                                            colorize: doc_touch.has-hover ? #ffffff : #9ca3af;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 38px;
+                            border-radius: 6px;
+                            background: root.server_running ? (start_touch.has-hover ? #991b1b : #7f1d1d) : (start_touch.has-hover ? #324a78 : #253961);
+
+                            start_touch := TouchArea {
+                                clicked => { root.toggle_server(); }
+                            }
+
+                            Text {
+                                text: root.server_running ? "STOP" : "START";
+                                color: #ffffff;
+                                font-size: 13px;
+                                font-weight: 700;
+                                letter-spacing: 0.5px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Mod explorer panel
+            Rectangle {
+                background: #18191d;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: #25272e;
+                horizontal-stretch: 1;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 16px;
+
+                    SearchInput {
+                        placeholder: "Search mods";
+                        edited(query) => {
+                            root.search_changed(query);
+                        }
+                    }
+
+                    // Categories
+                    VerticalLayout {
+                        spacing: 0px;
+                        vertical-stretch: 0;
+
+                        HorizontalLayout {
+                            spacing: 24px;
+                            alignment: start;
+
+                            CategoryTab {
+                                text: "All";
+                                is_active: root.active_category == "All";
+                                clicked => { root.filter_category("All"); }
+                            }
+                            CategoryTab {
+                                text: "Cars";
+                                is_active: root.active_category == "Cars";
+                                clicked => { root.filter_category("Cars"); }
+                            }
+                            CategoryTab {
+                                text: "Maps";
+                                is_active: root.active_category == "Maps";
+                                clicked => { root.filter_category("Maps"); }
+                            }
+                            CategoryTab {
+                                text: "Wheels";
+                                is_active: root.active_category == "Wheels";
+                                clicked => { root.filter_category("Wheels"); }
+                            }
+                            CategoryTab {
+                                text: "Other";
+                                is_active: root.active_category == "Other";
+                                clicked => { root.filter_category("Other"); }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: #25272e;
+                        }
+                    }
+
+                    // Stats & actions
+                    HorizontalLayout {
+                        spacing: 8px;
+                        vertical-stretch: 0;
+
+                        Text {
+                            text: "Selected: " + root.active_count + " of " + root.total_count + " • Total: " + root.total_size_str;
+                            color: #9ca3af;
+                            font-size: 12px;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        ActionButton {
+                            text: "Select all";
+                            clicked => { root.select_all(); }
+                        }
+                        ActionButton {
+                            text: "Deselect all";
+                            clicked => { root.deselect_all(); }
+                        }
+                        ActionButton {
+                            text: "Refresh";
+                            has_icon: true;
+                            icon: @image-url("icons/refresh.svg");
+                            clicked => { root.refresh_mods(); }
+                        }
+                        ActionButton {
+                            text: "Apply";
+                            is_primary: true;
+                            clicked => { root.apply_mods(); }
+                        }
+                    }
+
+                    // Sub-filter tabs
+                    VerticalLayout {
+                        spacing: 0px;
+                        vertical-stretch: 0;
+
+                        HorizontalLayout {
+                            spacing: 20px;
+                            alignment: start;
+
+                            SubFilterTab {
+                                text: "All (" + root.total_count + ")";
+                                is_active: root.sub_filter == "all";
+                                clicked => { root.filter_sub("all"); }
+                            }
+                            SubFilterTab {
+                                text: "Active (" + root.active_count + ")";
+                                is_active: root.sub_filter == "active";
+                                clicked => { root.filter_sub("active"); }
+                            }
+                            SubFilterTab {
+                                text: "Inactive (" + root.inactive_count + ")";
+                                is_active: root.sub_filter == "inactive";
+                                clicked => { root.filter_sub("inactive"); }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: #25272e;
+                        }
+                    }
+
+                    // Mod list
+                    Rectangle {
+                        background: #141517;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #23252c;
+                        vertical-stretch: 1;
+                        clip: true;
+
+                        ListView {
+                            width: 100%;
+                            height: 100%;
+
+                            for item in root.mods: Rectangle {
+                                width: parent.width;
+                                height: 38px;
+                                background: row_touch.has-hover ? #1c1e24 : transparent;
+
+                                Rectangle {
+                                    y: parent.height - 1px;
+                                    width: 100%;
+                                    height: 1px;
+                                    background: #191b20;
+                                }
+
+                                row_touch := TouchArea {
+                                    clicked => {
+                                        root.toggle_mod(item.name, !item.checked);
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    x: 0px;
+                                    width: parent.width;
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+
+                                    mod_cb := CustomCheckbox {
+                                        checked: item.checked;
+                                        y: (parent.height - self.height) / 2;
+                                        toggled => {
+                                            root.toggle_mod(item.name, !item.checked);
+                                        }
+                                    }
+
+                                    Text {
+                                        text: item.name;
+                                        color: item.checked ? #ffffff : #e5e7eb;
+                                        font-size: 13px;
+                                        font-weight: item.checked ? 600 : 400;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 0;
+                                    }
+
+                                    Rectangle {
+                                        background: #202228;
+                                        border-radius: 4px;
+                                        border-width: 1px;
+                                        border-color: #2b2e37;
+                                        height: 20px;
+                                        horizontal-stretch: 0;
+                                        y: (parent.height - self.height) / 2;
+
+                                        HorizontalLayout {
+                                            padding-left: 7px;
+                                            padding-right: 7px;
+                                            Text {
+                                                text: item.category;
+                                                color: #9ca3af;
+                                                font-size: 11px;
+                                                font-weight: 500;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                    }
+
+                                    Text {
+                                        text: item.size_str;
+                                        color: #71717a;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 0;
+                                    }
+
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        horizontal-stretch: 0;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 4px;
+                                        background: link_touch.has-hover ? #ffffff15 : transparent;
+
+                                        link_touch := TouchArea {
+                                            clicked => { root.open_mod_file(item.name); }
+                                        }
+
+                                        Image {
+                                            source: @image-url("icons/link.svg");
+                                            width: 14px;
+                                            height: 14px;
+                                            colorize: link_touch.has-hover ? #60a5fa : #6b7280;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Settings overlay modal
+    if root.show_settings: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+
+        TouchArea {
+            clicked => { root.toggle_settings(); }
+        }
+
+        modal_card := Rectangle {
+            width: 520px;
+            height: modal_layout.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: #18191d;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: #2c2f38;
+            clip: true;
+
+            TouchArea {}
+
+            modal_layout := VerticalLayout {
+                padding: 20px;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    Text {
+                        text: "Settings & Paths";
+                        color: #f3f4f6;
+                        font-size: 16px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Path options
+                PathField {
+                    title: "Storage (Archive of all .zip mods)";
+                    path_val: root.storage_path;
+                    pick => { root.pick_storage(); }
+                }
+
+                PathField {
+                    title: "Server Target (Resources/Client)";
+                    path_val: root.target_path;
+                    pick => { root.pick_target(); }
+                }
+
+                PathField {
+                    title: "Server Script / Executable (start-server.sh)";
+                    path_val: root.server_bin_path;
+                    pick => { root.pick_server_bin(); }
+                }
+
+                // Description block
+                Rectangle {
+                    background: #131416;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: #24252a;
+
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 4px;
+                        Text {
+                            text: "ℹ How it works:";
+                            color: #60a5fa;
+                            font-size: 11px;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "• Storage: Contains your entire collection of downloaded mod .zip files.\n• Target: Server's Resources/Client directory. Applying a profile creates symlinks instantly without duplicating files.";
+                            color: #9ca3af;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    Button {
+                        text: "Done";
+                        clicked => { root.toggle_settings(); }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=BeamForge
+Comment=BeamMP Server Mod & Profile Manager
+Exec=/mnt/storage/games/beamconf/run.sh
+Icon=/mnt/storage/games/beamconf/ui/icons/beamforge.svg
+Terminal=false
+Type=Application
+Categories=Game;Utility;
+Keywords=beammp;beamng;mods;manager;

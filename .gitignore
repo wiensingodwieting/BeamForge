@@ -1,0 +1,14 @@
+# Build outputs
+/target
+
+# Local machine configs and caches
+config.json
+mods_cache.json
+
+# Local profiles (each user creates their own)
+profiles/*.json
+!profiles/.gitkeep
+
+# Temporary profile updater
+PROFILE_README.md
+update-profile.sh
