@@ -1,0 +1,23 @@
+# Maintainer: wiensingodwieting <https://github.com/wiensingodwieting>
+pkgname=beamforge-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="BeamMP server mod and profile manager with symlink deployment"
+arch=('x86_64')
+url="https://github.com/wiensingodwieting/beamforge"
+license=('GPL-3.0-or-later')
+depends=('libxkbcommon' 'wayland' 'fontconfig' 'mesa' 'bash')
+provides=('beamforge')
+conflicts=('beamforge')
+source=("https://github.com/wiensingodwieting/beamforge/releases/download/v${pkgver}/beamforge-v${pkgver}-linux-x86_64.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+    cd "${srcdir}/beamforge-v${pkgver}-linux-x86_64"
+
+    install -Dm755 beamforge "${pkgdir}/usr/bin/beamforge"
+    install -Dm644 ui/icons/beamforge.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/beamforge.svg"
+    install -Dm644 beamforge.desktop "${pkgdir}/usr/share/applications/beamforge.desktop"
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}

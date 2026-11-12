@@ -24,17 +24,30 @@ It manages server mods via symbolic links, allowing you to switch between mod co
 
 ## Installation & Running
 
-### Requirements
+### Pre-built binary (Recommended)
 
-- Rust 1.75+ (`cargo`, `rustc`)
-- System libraries: `wayland`, `libxkbcommon`, `libGL` / `mesa`, `fontconfig`
+Download the latest release archive from [Releases](https://github.com/wiensingodwieting/beamforge/releases):
 
-### Standard Linux (Arch Linux, Ubuntu, Fedora, Debian)
+```bash
+tar -xzvf beamforge-*-linux-x86_64.tar.gz
+cd beamforge-*-linux-x86_64
+./run.sh
+```
+
+### Building from source
+
+Requirements: Rust 1.75+ and system libraries (`wayland`, `libxkbcommon`, `libGL` / `mesa`, `fontconfig`).
 
 ```bash
 git clone https://github.com/wiensingodwieting/beamforge.git
 cd beamforge
 cargo run --release
+```
+
+### Arch Linux (AUR / PKGBUILD)
+
+```bash
+cd aur && makepkg -si
 ```
 
 ### NixOS
