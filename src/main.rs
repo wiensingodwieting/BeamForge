@@ -3,11 +3,12 @@ use slint::{ModelRc, VecModel};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
+use std::sync::mpsc::Receiver;
 use std::time::UNIX_EPOCH;
 
 slint::include_modules!();
@@ -32,6 +33,8 @@ struct ModMeta {
     size_bytes: u64,
     size_str: String,
     mtime: u64,
+    #[serde(default)]
+    map_path: String,
 }
 
 fn sanitize_profile_name(name: &str) -> String {
@@ -83,6 +86,7 @@ fn parse_mod_zip(path: &Path, mtime: u64, size_bytes: u64) -> ModMeta {
     let mut title = String::new();
     let mut author = String::new();
     let mut category = String::new();
+    let mut map_path = String::new();
 
     let name_lower = filename.to_lowercase();
     if name_lower.contains("[wheels]") || name_lower.contains("wheelpack") || name_lower.contains("wheels") {
@@ -101,6 +105,16 @@ fn parse_mod_zip(path: &Path, mtime: u64, size_bytes: u64) -> ModMeta {
                     if let Ok(name) = file.name() {
                         if name.starts_with("levels/") {
                             is_level = true;
+                            if map_path.is_empty() {
+                                if name.ends_with("/info.json") && name.matches('/').count() == 2 {
+                                    map_path = format!("/{}", name);
+                                } else {
+                                    let parts: Vec<&str> = name.split('/').collect();
+                                    if parts.len() >= 2 && !parts[1].is_empty() && parts[1] != "info.json" {
+                                        map_path = format!("/levels/{}/info.json", parts[1]);
+                                    }
+                                }
+                            }
                         }
                         if name.starts_with("vehicles/") {
                             is_vehicle = true;
@@ -150,6 +164,22 @@ fn parse_mod_zip(path: &Path, mtime: u64, size_bytes: u64) -> ModMeta {
                                     }
                                 }
                             }
+                            if title.is_empty() {
+                                let text = String::from_utf8_lossy(&buf);
+                                if let Some(pos) = text.find("\"title\"") {
+                                    if let Some(colon) = text[pos..].find(':') {
+                                        let after = &text[pos + colon + 1..];
+                                        if let Some(q1) = after.find('"') {
+                                            if let Some(q2) = after[q1 + 1..].find('"') {
+                                                let t = after[q1 + 1..q1 + 1 + q2].trim();
+                                                if !t.is_empty() && !t.contains('\n') {
+                                                    title = t.to_string();
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -172,7 +202,227 @@ fn parse_mod_zip(path: &Path, mtime: u64, size_bytes: u64) -> ModMeta {
         size_bytes,
         size_str,
         mtime,
+        map_path,
     }
+}
+
+#[derive(Clone, Default, Debug)]
+struct ServerConfigData {
+    name: String,
+    description: String,
+    map: String,
+    max_players: String,
+    max_cars: String,
+    port: String,
+    private: bool,
+    auth_key: String,
+}
+
+fn load_server_config_toml(path: &Path) -> ServerConfigData {
+    let mut data = ServerConfigData {
+        name: "BeamMP Server".into(),
+        description: "BeamMP Server".into(),
+        map: "/levels/west_coast_usa/info.json".into(),
+        max_players: "8".into(),
+        max_cars: "3".into(),
+        port: "30814".into(),
+        private: true,
+        auth_key: String::new(),
+    };
+
+    if let Ok(content) = fs::read_to_string(path) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.is_empty() {
+                continue;
+            }
+            if let Some((k, v)) = trimmed.split_once('=') {
+                let key = k.trim();
+                let val = v.trim().trim_matches('"');
+                match key {
+                    "Name" => data.name = val.to_string(),
+                    "Description" => data.description = val.to_string(),
+                    "Map" => data.map = val.to_string(),
+                    "MaxPlayers" => data.max_players = val.to_string(),
+                    "MaxCars" => data.max_cars = val.to_string(),
+                    "Port" => data.port = val.to_string(),
+                    "Private" => data.private = val.parse::<bool>().unwrap_or(true),
+                    "AuthKey" => data.auth_key = val.to_string(),
+                    _ => {}
+                }
+            }
+        }
+    }
+    data
+}
+
+fn sanitize_toml_str(val: &str) -> String {
+    val.replace('\r', "")
+       .replace('\n', " ")
+       .replace('\\', "\\\\")
+       .replace('"', "\\\"")
+}
+
+fn save_server_config_toml(
+    path: &Path,
+    name: &str,
+    description: &str,
+    map: &str,
+    max_players: &str,
+    max_cars: &str,
+    port: &str,
+    private: bool,
+    auth_key: &str,
+) -> Result<(), String> {
+    let s_name = sanitize_toml_str(name);
+    let s_desc = sanitize_toml_str(description);
+    let s_map = sanitize_toml_str(map);
+    let s_auth = sanitize_toml_str(auth_key.trim());
+    let u_players = max_players.trim().parse::<u32>().unwrap_or(8);
+    let u_cars = max_cars.trim().parse::<u32>().unwrap_or(3);
+    let u_port = port.trim().parse::<u32>().unwrap_or(30814);
+
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let mut new_lines = Vec::new();
+    let mut found_name = false;
+    let mut found_desc = false;
+    let mut found_map = false;
+    let mut found_max_players = false;
+    let mut found_max_cars = false;
+    let mut found_port = false;
+    let mut found_private = false;
+    let mut found_auth = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Name ") || trimmed.starts_with("Name=") {
+            new_lines.push(format!("Name = \"{}\"", s_name));
+            found_name = true;
+        } else if trimmed.starts_with("Description ") || trimmed.starts_with("Description=") {
+            new_lines.push(format!("Description = \"{}\"", s_desc));
+            found_desc = true;
+        } else if trimmed.starts_with("Map ") || trimmed.starts_with("Map=") {
+            new_lines.push(format!("Map = \"{}\"", s_map));
+            found_map = true;
+        } else if trimmed.starts_with("MaxPlayers ") || trimmed.starts_with("MaxPlayers=") {
+            new_lines.push(format!("MaxPlayers = {}", u_players));
+            found_max_players = true;
+        } else if trimmed.starts_with("MaxCars ") || trimmed.starts_with("MaxCars=") {
+            new_lines.push(format!("MaxCars = {}", u_cars));
+            found_max_cars = true;
+        } else if trimmed.starts_with("Port ") || trimmed.starts_with("Port=") {
+            new_lines.push(format!("Port = {}", u_port));
+            found_port = true;
+        } else if trimmed.starts_with("Private ") || trimmed.starts_with("Private=") {
+            new_lines.push(format!("Private = {}", private));
+            found_private = true;
+        } else if trimmed.starts_with("AuthKey ") || trimmed.starts_with("AuthKey=") {
+            new_lines.push(format!("AuthKey = \"{}\"", s_auth));
+            found_auth = true;
+        } else {
+            new_lines.push(line.to_string());
+        }
+    }
+
+    if !found_name { new_lines.push(format!("Name = \"{}\"", s_name)); }
+    if !found_desc { new_lines.push(format!("Description = \"{}\"", s_desc)); }
+    if !found_map { new_lines.push(format!("Map = \"{}\"", s_map)); }
+    if !found_max_players { new_lines.push(format!("MaxPlayers = {}", u_players)); }
+    if !found_max_cars { new_lines.push(format!("MaxCars = {}", u_cars)); }
+    if !found_port { new_lines.push(format!("Port = {}", u_port)); }
+    if !found_private { new_lines.push(format!("Private = {}", private)); }
+    if !found_auth { new_lines.push(format!("AuthKey = \"{}\"", s_auth)); }
+
+    fs::write(path, new_lines.join("\n") + "\n").map_err(|e| e.to_string())
+}
+
+const VANILLA_MAPS: &[(&str, &str, &str, &[u8])] = &[
+    ("West Coast, USA", "/levels/west_coast_usa/info.json", "west_coast_usa.jpg", include_bytes!("../ui/maps/west_coast_usa.jpg")),
+    ("Gridmap v2", "/levels/gridmap_v2/info.json", "gridmap_v2.jpg", include_bytes!("../ui/maps/gridmap_v2.jpg")),
+    ("Utah, USA", "/levels/utah/info.json", "utah.jpg", include_bytes!("../ui/maps/utah.jpg")),
+    ("East Coast, USA", "/levels/east_coast_usa/info.json", "east_coast_usa.jpg", include_bytes!("../ui/maps/east_coast_usa.jpg")),
+    ("Italy", "/levels/italy/info.json", "italy.jpg", include_bytes!("../ui/maps/italy.jpg")),
+    ("Jungle Rock Island", "/levels/jungle_rock_island/info.json", "jungle_rock_island.jpg", include_bytes!("../ui/maps/jungle_rock_island.jpg")),
+    ("Industrial Site", "/levels/industrial/info.json", "industrial.jpg", include_bytes!("../ui/maps/industrial.jpg")),
+    ("Small Island, USA", "/levels/small_island/info.json", "small_island.jpg", include_bytes!("../ui/maps/small_island.jpg")),
+    ("Johnson Valley", "/levels/johnson_valley/info.json", "johnson_valley.jpg", include_bytes!("../ui/maps/johnson_valley.jpg")),
+    ("Automation Test Track", "/levels/automation_test_track/info.json", "automation_test_track.jpg", include_bytes!("../ui/maps/automation_test_track.jpg")),
+    ("Hirochi Raceway", "/levels/hirochi_raceway/info.json", "hirochi_raceway.jpg", include_bytes!("../ui/maps/hirochi_raceway.jpg")),
+    ("Derby Arena", "/levels/derby/info.json", "derby.jpg", include_bytes!("../ui/maps/derby.jpg")),
+];
+
+fn extract_map_path_from_zip(zip_path: &Path) -> Option<String> {
+    let file = fs::File::open(zip_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index(i) {
+            if let Ok(entry_name) = entry.name() {
+                if entry_name.starts_with("levels/") {
+                    if entry_name.ends_with("/info.json") && entry_name.matches('/').count() == 2 {
+                        return Some(format!("/{}", entry_name));
+                    }
+                    let parts: Vec<&str> = entry_name.split('/').collect();
+                    if parts.len() >= 2 && !parts[1].is_empty() && parts[1] != "info.json" {
+                        return Some(format!("/levels/{}/info.json", parts[1]));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_zip_preview(zip_path: &Path, out_base: &Path) -> Option<PathBuf> {
+    let file = fs::File::open(zip_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+
+    let mut best_index = None;
+    let mut best_priority = 0;
+    let mut best_ext = "jpg";
+
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index(i) {
+            if let Ok(entry_name) = entry.name() {
+                let name = entry_name.to_lowercase();
+                let ext = if name.ends_with(".png") {
+                    "png"
+                } else if name.ends_with(".jpg") || name.ends_with(".jpeg") {
+                    "jpg"
+                } else {
+                    continue;
+                };
+
+                if name.contains("preview") && best_priority < 3 {
+                    best_index = Some(i);
+                    best_priority = 3;
+                    best_ext = ext;
+                } else if name.contains("quickrace") && best_priority < 2 {
+                    best_index = Some(i);
+                    best_priority = 2;
+                    best_ext = ext;
+                } else if name.starts_with("levels/") && best_priority < 1 {
+                    best_index = Some(i);
+                    best_priority = 1;
+                    best_ext = ext;
+                }
+            }
+        }
+    }
+
+    if let Some(idx) = best_index {
+        if let Ok(entry) = archive.by_index(idx) {
+            let mut buf = Vec::new();
+            let mut take = entry.take(4 * 1024 * 1024);
+            if take.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                let target = out_base.with_extension(best_ext);
+                if fs::write(&target, &buf).is_ok() {
+                    return Some(target);
+                }
+            }
+        }
+    }
+    None
 }
 
 struct AppState {
@@ -187,6 +437,11 @@ struct AppState {
     show_settings: bool,
     show_new_profile_input: bool,
     server_child: Option<std::process::Child>,
+    server_stdin: Option<std::process::ChildStdin>,
+    server_logs: Vec<String>,
+    log_receiver: Option<Receiver<String>>,
+    show_console: bool,
+    show_server_config: bool,
 }
 
 impl AppState {
@@ -211,6 +466,11 @@ impl AppState {
             show_settings: is_first_run || std::env::args().any(|a| a == "--test-settings"),
             show_new_profile_input: false,
             server_child: None,
+            server_stdin: None,
+            server_logs: Vec::new(),
+            log_receiver: None,
+            show_console: false,
+            show_server_config: false,
         };
         state.scan_mods();
         state.scan_presets();
@@ -221,6 +481,81 @@ impl AppState {
         }
 
         state
+    }
+
+    fn get_map_items(&self) -> Vec<MapItem> {
+        let preview_dir = PathBuf::from("/tmp/beamforge_maps");
+        let _ = fs::create_dir_all(&preview_dir);
+
+        let mut items = Vec::new();
+        let mut added_paths = HashSet::new();
+
+        // 1. Vanilla maps
+        for (title, path, filename, bytes) in VANILLA_MAPS {
+            let target_file = preview_dir.join(filename);
+            if !target_file.exists() {
+                let _ = fs::write(&target_file, bytes);
+            }
+            let img = slint::Image::load_from_path(&target_file).unwrap_or_default();
+            items.push(MapItem {
+                title: (*title).into(),
+                path: (*path).into(),
+                badge: "VANILLA".into(),
+                preview: img,
+            });
+            added_paths.insert((*path).to_string());
+        }
+
+        // 2. Mod maps
+        let fallback_img_path = preview_dir.join("gridmap_v2.jpg");
+        for m in &self.all_mods {
+            if m.category == "Maps" {
+                let mut map_path = m.map_path.clone();
+                let zip_path = Path::new(&self.config.storage_path).join(&m.filename);
+
+                if map_path.is_empty() && zip_path.exists() {
+                    map_path = extract_map_path_from_zip(&zip_path).unwrap_or_default();
+                }
+
+                if map_path.is_empty() || added_paths.contains(&map_path) {
+                    continue;
+                }
+
+                let safe_name = m.filename.replace(|c: char| !c.is_alphanumeric() && c != '.', "_");
+                let out_base = preview_dir.join(&safe_name);
+
+                let jpg_target = out_base.with_extension("jpg");
+                let png_target = out_base.with_extension("png");
+
+                let preview_file = if jpg_target.exists() {
+                    Some(jpg_target)
+                } else if png_target.exists() {
+                    Some(png_target)
+                } else if zip_path.exists() {
+                    extract_zip_preview(&zip_path, &out_base)
+                } else {
+                    None
+                };
+
+                let img = if let Some(ref pf) = preview_file {
+                    slint::Image::load_from_path(pf).unwrap_or_default()
+                } else if fallback_img_path.exists() {
+                    slint::Image::load_from_path(&fallback_img_path).unwrap_or_default()
+                } else {
+                    slint::Image::default()
+                };
+
+                items.push(MapItem {
+                    title: m.title.clone().into(),
+                    path: map_path.clone().into(),
+                    badge: "MOD".into(),
+                    preview: img,
+                });
+                added_paths.insert(map_path);
+            }
+        }
+
+        items
     }
 
     fn save_config(&self) {
@@ -252,7 +587,7 @@ impl AppState {
                         let size_bytes = meta.map(|m| m.len()).unwrap_or(0);
 
                         let mut mod_info = if let Some(cached) = cache.get(filename) {
-                            if cached.mtime == mtime && cached.size_bytes == size_bytes {
+                            if cached.mtime == mtime && cached.size_bytes == size_bytes && (!cached.map_path.is_empty() || cached.category != "Maps") {
                                 cached.clone()
                             } else {
                                 parse_mod_zip(&path, mtime, size_bytes)
@@ -362,7 +697,9 @@ impl AppState {
         if let Some(mut child) = self.server_child.take() {
             let _ = child.kill();
         }
+        self.server_stdin = None;
         let _ = Command::new("pkill").arg("-f").arg("BeamMP-Server").output();
+        self.server_logs.push("--- BeamMP Server stopped ---".into());
     }
 
     fn activate(&self) -> Result<usize, String> {
@@ -421,6 +758,9 @@ impl AppState {
         ui.set_sub_filter(self.sub_filter.clone().into());
         ui.set_show_settings(self.show_settings);
         ui.set_show_new_profile_input(self.show_new_profile_input);
+        ui.set_show_console(self.show_console);
+        ui.set_console_text(self.server_logs.join("\n").into());
+        ui.set_show_server_config(self.show_server_config);
 
         let running = self.is_server_running();
         ui.set_server_running(running);
@@ -506,20 +846,39 @@ fn main() -> Result<(), slint::PlatformError> {
 
     state.borrow_mut().sync_ui(&ui);
 
-    // Background timer to poll server process state
+    // Background timer to poll server process state and stream logs
     let timer = slint::Timer::default();
     {
         let state = state.clone();
         let ui_weak = ui.as_weak();
         timer.start(
             slint::TimerMode::Repeated,
-            std::time::Duration::from_millis(1500),
+            std::time::Duration::from_millis(250),
             move || {
                 let mut st = state.borrow_mut();
                 let running = st.is_server_running();
+                let mut logs_updated = false;
+                let mut new_lines = Vec::new();
+                if let Some(rx) = st.log_receiver.as_ref() {
+                    while let Ok(line) = rx.try_recv() {
+                        new_lines.push(line);
+                    }
+                }
+                if !new_lines.is_empty() {
+                    logs_updated = true;
+                    st.server_logs.extend(new_lines);
+                    if st.server_logs.len() > 1000 {
+                        let excess = st.server_logs.len() - 1000;
+                        st.server_logs.drain(0..excess);
+                    }
+                }
+
                 if let Some(ui) = ui_weak.upgrade() {
                     if ui.get_server_running() != running {
                         ui.set_server_running(running);
+                    }
+                    if logs_updated && st.show_console {
+                        ui.set_console_text(st.server_logs.join("\n").into());
                     }
                 }
             },
@@ -804,12 +1163,45 @@ fn main() -> Result<(), slint::PlatformError> {
                     Command::new(&bin)
                 };
                 cmd.current_dir(work_dir);
+                cmd.stdin(std::process::Stdio::piped());
+                cmd.stdout(std::process::Stdio::piped());
+                cmd.stderr(std::process::Stdio::piped());
 
                 match cmd.spawn() {
-                    Ok(child) => {
+                    Ok(mut child) => {
+                        let stdin = child.stdin.take();
+                        let stdout = child.stdout.take();
+                        let stderr = child.stderr.take();
+
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        st.log_receiver = Some(rx);
+                        st.server_stdin = stdin;
                         st.server_child = Some(child);
+
+                        if let Some(out) = stdout {
+                            let tx_out = tx.clone();
+                            std::thread::spawn(move || {
+                                let reader = BufReader::new(out);
+                                for line in reader.lines().flatten() {
+                                    let _ = tx_out.send(line);
+                                }
+                            });
+                        }
+
+                        if let Some(err) = stderr {
+                            let tx_err = tx;
+                            std::thread::spawn(move || {
+                                let reader = BufReader::new(err);
+                                for line in reader.lines().flatten() {
+                                    let _ = tx_err.send(line);
+                                }
+                            });
+                        }
+
+                        st.server_logs.push("--- BeamMP Server started ---".into());
                         if let Some(ui) = ui_weak.upgrade() {
                             ui.set_server_running(true);
+                            ui.set_console_text(st.server_logs.join("\n").into());
                             show_toast(&ui_weak, "BeamMP Server started successfully!".into(), false);
                         }
                     }
@@ -821,7 +1213,141 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // Open ServerConfig.toml
+    // Toggle live console modal
+    {
+        let state = state.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_toggle_console(move || {
+            let mut st = state.borrow_mut();
+            st.show_console = !st.show_console;
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_console(st.show_console);
+                ui.set_console_text(st.server_logs.join("\n").into());
+            }
+        });
+    }
+
+    // Clear console output
+    {
+        let state = state.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_clear_console(move || {
+            let mut st = state.borrow_mut();
+            st.server_logs.clear();
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_console_text("".into());
+            }
+        });
+    }
+
+    // Send command to server stdin
+    {
+        let state = state.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_send_console_command(move |cmd_str| {
+            let mut st = state.borrow_mut();
+            let cmd = cmd_str.trim().to_string();
+            if cmd.is_empty() { return; }
+            st.server_logs.push(format!("> {}", cmd));
+            if let Some(stdin) = st.server_stdin.as_mut() {
+                let _ = writeln!(stdin, "{}", cmd);
+                let _ = stdin.flush();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_console_text(st.server_logs.join("\n").into());
+            }
+        });
+    }
+
+    // Toggle server config editor modal
+    {
+        let state = state.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_toggle_server_config(move || {
+            let mut st = state.borrow_mut();
+            st.show_server_config = !st.show_server_config;
+            if st.show_server_config {
+                let bin = PathBuf::from(&st.config.server_bin_path);
+                let dir = bin.parent().unwrap_or(Path::new("."));
+                let cfg_file = dir.join("ServerConfig.toml");
+                let data = load_server_config_toml(&cfg_file);
+                let map_items = st.get_map_items();
+
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_cfg_name(data.name.into());
+                    ui.set_cfg_desc(data.description.into());
+                    ui.set_cfg_map(data.map.clone().into());
+                    ui.set_cfg_max_players(data.max_players.into());
+                    ui.set_cfg_max_cars(data.max_cars.into());
+                    ui.set_cfg_port(data.port.into());
+                    ui.set_cfg_private(data.private);
+                    ui.set_cfg_auth_key(data.auth_key.into());
+
+                    if let Some(m) = map_items.iter().find(|item| item.path == data.map) {
+                        ui.set_preview_map_img(m.preview.clone());
+                        ui.set_preview_map_title(m.title.clone());
+                        ui.set_preview_map_badge(m.badge.clone());
+                        ui.set_preview_map_path(m.path.clone());
+                    } else if let Some(m) = map_items.first() {
+                        ui.set_preview_map_img(m.preview.clone());
+                        ui.set_preview_map_title(m.title.clone());
+                        ui.set_preview_map_badge(m.badge.clone());
+                        ui.set_preview_map_path(m.path.clone());
+                    }
+
+                    ui.set_map_items(ModelRc::new(VecModel::from(map_items)));
+                    ui.set_show_server_config(true);
+                }
+            } else if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_server_config(false);
+            }
+        });
+    }
+
+    // Select map from suggestions
+    {
+        let state = state.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_select_map(move |map| {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_cfg_map(map.clone());
+                let st = state.borrow();
+                let map_items = st.get_map_items();
+                if let Some(m) = map_items.iter().find(|item| item.path == map.as_str()) {
+                    ui.set_preview_map_img(m.preview.clone());
+                    ui.set_preview_map_title(m.title.clone());
+                    ui.set_preview_map_badge(m.badge.clone());
+                    ui.set_preview_map_path(m.path.clone());
+                }
+            }
+        });
+    }
+
+    // Save server configuration
+    {
+        let state = state.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_save_server_config(move |name, desc, map, max_p, max_c, port, priv_srv, auth| {
+            let st = state.borrow();
+            let bin = PathBuf::from(&st.config.server_bin_path);
+            let dir = bin.parent().unwrap_or(Path::new("."));
+            let cfg_file = dir.join("ServerConfig.toml");
+
+            match save_server_config_toml(&cfg_file, &name, &desc, &map, &max_p, &max_c, &port, priv_srv, &auth) {
+                Ok(_) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_show_server_config(false);
+                    }
+                    show_toast(&ui_weak, "ServerConfig.toml saved successfully!".into(), false);
+                }
+                Err(e) => {
+                    show_toast(&ui_weak, format!("Failed to save config: {}", e), true);
+                }
+            }
+        });
+    }
+
+    // Open ServerConfig.toml in external editor
     {
         let state = state.clone();
         ui.on_open_server_config(move || {

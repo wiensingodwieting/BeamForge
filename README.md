@@ -14,6 +14,9 @@ It manages server mods via symbolic links, allowing you to switch between mod co
 - **Symlink deployment**: Applies mods by linking directly into `Resources/Client` instead of copying files.
 - **Mod indexing**: Scans archive metadata to group mods by category (cars, maps, wheels) and tracks file sizes.
 - **Search & filtering**: Filter mods by title, archive name, category, or active status.
+- **Interactive Server Console**: Live server logs with real-time command input (`stdin`) directly from the UI.
+- **ServerConfig.toml Editor**: Visual configuration of server parameters (name, description, port, max players/cars, auth key, privacy).
+- **Map Selector with HD Preview**: Browse official vanilla levels and scanned mod maps with instant widescreen previews on hover.
 - **Server controller**: Start, stop, and monitor the BeamMP server process from the UI.
 
 ## How it works

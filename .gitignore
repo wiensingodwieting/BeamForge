@@ -4,6 +4,7 @@
 # Local machine configs and caches
 config.json
 mods_cache.json
+.nix-lib-path
 
 # Local profiles (each user creates their own)
 profiles/*.json

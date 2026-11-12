@@ -15,6 +15,13 @@ export struct PresetItem {
     count: int,
 }
 
+export struct MapItem {
+    title: string,
+    path: string,
+    badge: string,
+    preview: image,
+}
+
 // Custom checkbox with check/cross mark
 component CustomCheckbox {
     in property <bool> checked: false;
@@ -284,6 +291,22 @@ export component AppWindow inherits Window {
     in-out property <bool> server_running: false;
     in-out property <bool> show_settings: false;
     in-out property <bool> show_new_profile_input: false;
+    in-out property <bool> show_console: false;
+    in-out property <string> console_text: "";
+    in-out property <bool> show_server_config: false;
+    in-out property <string> cfg_name: "";
+    in-out property <string> cfg_desc: "";
+    in-out property <string> cfg_map: "";
+    in-out property <image> preview_map_img;
+    in-out property <string> preview_map_title: "Select a Map";
+    in-out property <string> preview_map_badge: "";
+    in-out property <string> preview_map_path: "";
+    in-out property <string> cfg_max_players: "8";
+    in-out property <string> cfg_max_cars: "3";
+    in-out property <string> cfg_port: "30814";
+    in-out property <bool> cfg_private: true;
+    in-out property <string> cfg_auth_key: "";
+    in-out property <[MapItem]> map_items: [];
 
     // Callbacks
     callback select_preset(string);
@@ -300,6 +323,12 @@ export component AppWindow inherits Window {
     callback apply_mods();
     callback toggle_server();
     callback open_server_config();
+    callback toggle_console();
+    callback clear_console();
+    callback send_console_command(string);
+    callback toggle_server_config();
+    callback select_map(string);
+    callback save_server_config(string, string, string, string, string, string, bool, string);
     callback open_mod_file(string);
     callback pick_storage();
     callback pick_target();
@@ -491,7 +520,7 @@ export component AppWindow inherits Window {
                                 width: 100%;
                                 padding-left: 10px;
                                 padding-right: 6px;
-                                spacing: 6px;
+                                spacing: 4px;
 
                                 Text {
                                     text: p.name;
@@ -499,47 +528,56 @@ export component AppWindow inherits Window {
                                     font-size: 13px;
                                     font-weight: p.name == root.current_preset ? 600 : 500;
                                     vertical-alignment: center;
+                                    horizontal-alignment: left;
                                     horizontal-stretch: 1;
                                     overflow: elide;
                                 }
 
-                                Rectangle {
-                                    width: 24px;
-                                    height: 24px;
-                                    border-radius: 4px;
-                                    background: save_touch.has-hover ? #ffffff20 : transparent;
+                                VerticalLayout {
+                                    alignment: center;
 
-                                    save_touch := TouchArea {
-                                        clicked => { root.save_preset_by_name(p.name); }
-                                    }
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        border-radius: 4px;
+                                        background: save_touch.has-hover ? #ffffff20 : transparent;
 
-                                    Image {
-                                        source: @image-url("icons/save.svg");
-                                        width: 14px;
-                                        height: 14px;
-                                        colorize: save_touch.has-hover ? #ffffff : (p.name == root.current_preset ? #cbd5e1 : #6b7280);
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
+                                        save_touch := TouchArea {
+                                            clicked => { root.save_preset_by_name(p.name); }
+                                        }
+
+                                        Image {
+                                            source: @image-url("icons/save.svg");
+                                            width: 14px;
+                                            height: 14px;
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            colorize: save_touch.has-hover ? #ffffff : (p.name == root.current_preset ? #cbd5e1 : #6b7280);
+                                        }
                                     }
                                 }
 
-                                Rectangle {
-                                    width: 24px;
-                                    height: 24px;
-                                    border-radius: 4px;
-                                    background: trash_touch.has-hover ? #ef444430 : transparent;
+                                VerticalLayout {
+                                    alignment: center;
 
-                                    trash_touch := TouchArea {
-                                        clicked => { root.delete_preset_by_name(p.name); }
-                                    }
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        border-radius: 4px;
+                                        background: trash_touch.has-hover ? #ef444430 : transparent;
 
-                                    Image {
-                                        source: @image-url("icons/trash.svg");
-                                        width: 14px;
-                                        height: 14px;
-                                        colorize: trash_touch.has-hover ? #ef4444 : (p.name == root.current_preset ? #cbd5e1 : #6b7280);
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
+                                        trash_touch := TouchArea {
+                                            clicked => { root.delete_preset_by_name(p.name); }
+                                        }
+
+                                        Image {
+                                            source: @image-url("icons/trash.svg");
+                                            width: 14px;
+                                            height: 14px;
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            colorize: trash_touch.has-hover ? #ef4444 : (p.name == root.current_preset ? #cbd5e1 : #6b7280);
+                                        }
                                     }
                                 }
                             }
@@ -548,25 +586,17 @@ export component AppWindow inherits Window {
 
                     // Server supervisor section
                     VerticalLayout {
-                        spacing: 8px;
                         vertical-stretch: 0;
 
                         Rectangle {
-                            background: #1b1d22;
+                            background: #17191e;
                             border-radius: 8px;
                             border-width: 1px;
-                            border-color: #272930;
+                            border-color: #272a33;
 
                             VerticalLayout {
-                                padding: 10px;
-                                spacing: 6px;
-
-                                Text {
-                                    text: "BeamMP Server:";
-                                    color: #9ca3af;
-                                    font-size: 11px;
-                                    font-weight: 500;
-                                }
+                                padding: 12px;
+                                spacing: 10px;
 
                                 HorizontalLayout {
                                     spacing: 8px;
@@ -580,56 +610,85 @@ export component AppWindow inherits Window {
                                     }
 
                                     Text {
-                                        text: root.server_running ? "Running" : "Stopped";
+                                        text: root.server_running ? "Server Running" : "Server Stopped";
                                         color: root.server_running ? #4ade80 : #9ca3af;
-                                        font-size: 13px;
+                                        font-size: 12px;
                                         font-weight: 600;
                                         vertical-alignment: center;
                                         horizontal-stretch: 1;
                                     }
 
-                                    Rectangle {
-                                        width: 26px;
-                                        height: 26px;
-                                        border-radius: 5px;
-                                        background: doc_touch.has-hover ? #292d37 : #22242c;
-                                        border-width: 1px;
-                                        border-color: #2e323e;
+                                    // Action buttons (Terminal + Config) with clear 10px spacing
+                                    HorizontalLayout {
+                                        spacing: 10px;
 
-                                        doc_touch := TouchArea {
-                                            clicked => { root.open_server_config(); }
+                                        // Live Console Button
+                                        Rectangle {
+                                            width: 28px;
+                                            height: 28px;
+                                            border-radius: 6px;
+                                            background: term_touch.has-hover ? #2e3547 : (root.server_running ? #1b263b : #20222a);
+                                            border-width: 1px;
+                                            border-color: root.server_running ? #3b82f6 : #2a2e38;
+
+                                            term_touch := TouchArea {
+                                                clicked => { root.toggle_console(); }
+                                            }
+
+                                            Image {
+                                                source: @image-url("icons/terminal.svg");
+                                                width: 14px;
+                                                height: 14px;
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                                colorize: root.server_running ? #60a5fa : (term_touch.has-hover ? #ffffff : #9ca3af);
+                                            }
                                         }
 
-                                        Image {
-                                            source: @image-url("icons/document.svg");
-                                            width: 13px;
-                                            height: 13px;
-                                            colorize: doc_touch.has-hover ? #ffffff : #9ca3af;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
+                                        // Server Config Editor Button
+                                        Rectangle {
+                                            width: 28px;
+                                            height: 28px;
+                                            border-radius: 6px;
+                                            background: cfg_btn_touch.has-hover ? #2e3547 : #20222a;
+                                            border-width: 1px;
+                                            border-color: #2a2e38;
+
+                                            cfg_btn_touch := TouchArea {
+                                                clicked => { root.toggle_server_config(); }
+                                            }
+
+                                            Image {
+                                                source: @image-url("icons/sliders.svg");
+                                                width: 14px;
+                                                height: 14px;
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                                colorize: cfg_btn_touch.has-hover ? #ffffff : #9ca3af;
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        }
 
-                        Rectangle {
-                            height: 38px;
-                            border-radius: 6px;
-                            background: root.server_running ? (start_touch.has-hover ? #991b1b : #7f1d1d) : (start_touch.has-hover ? #324a78 : #253961);
+                                Rectangle {
+                                    height: 34px;
+                                    border-radius: 6px;
+                                    background: root.server_running ? (start_touch.has-hover ? #b91c1c : #991b1b) : (start_touch.has-hover ? #2563eb : #1d4ed8);
 
-                            start_touch := TouchArea {
-                                clicked => { root.toggle_server(); }
-                            }
+                                    start_touch := TouchArea {
+                                        clicked => { root.toggle_server(); }
+                                    }
 
-                            Text {
-                                text: root.server_running ? "STOP" : "START";
-                                color: #ffffff;
-                                font-size: 13px;
-                                font-weight: 700;
-                                letter-spacing: 0.5px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
+                                    Text {
+                                        text: root.server_running ? "STOP SERVER" : "START SERVER";
+                                        color: #ffffff;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        letter-spacing: 0.5px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
                             }
                         }
                     }
@@ -970,6 +1029,621 @@ export component AppWindow inherits Window {
                     Button {
                         text: "Done";
                         clicked => { root.toggle_settings(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // Live Server Console Modal
+    if root.show_console: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000085;
+
+        TouchArea {
+            clicked => { root.toggle_console(); }
+        }
+
+        Rectangle {
+            width: 860px;
+            height: 560px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: #121316;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #2c2f38;
+            clip: true;
+
+            TouchArea {}
+
+            VerticalLayout {
+                padding: 0px;
+                spacing: 0px;
+
+                // Console Header bar
+                Rectangle {
+                    height: 42px;
+                    background: #18191d;
+
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: #252830;
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        spacing: 10px;
+
+                        // Online/offline status dot
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: root.server_running ? #22c55e : #6b7280;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        Text {
+                            text: "BeamMP Server Console";
+                            color: #f3f4f6;
+                            font-size: 14px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: root.server_running ? "(Online)" : "(Offline)";
+                            color: root.server_running ? #4ade80 : #6b7280;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        // Clear button
+                        Rectangle {
+                            width: 60px;
+                            height: 26px;
+                            border-radius: 4px;
+                            background: clear_touch.has-hover ? #2e323e : #20232b;
+                            border-width: 1px;
+                            border-color: #2e3340;
+                            y: (parent.height - self.height) / 2;
+
+                            clear_touch := TouchArea {
+                                clicked => { root.clear_console(); }
+                            }
+
+                            Text {
+                                text: "Clear";
+                                color: #d1d5db;
+                                font-size: 11px;
+                                font-weight: 500;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Close button
+                        Rectangle {
+                            width: 26px;
+                            height: 26px;
+                            border-radius: 4px;
+                            background: close_term_touch.has-hover ? #374151 : transparent;
+                            y: (parent.height - self.height) / 2;
+
+                            close_term_touch := TouchArea {
+                                clicked => { root.toggle_console(); }
+                            }
+
+                            Text {
+                                text: "✕";
+                                color: #9ca3af;
+                                font-size: 14px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                // Terminal output body
+                Rectangle {
+                    background: #0d0e11;
+                    vertical-stretch: 1;
+
+                    ScrollView {
+                        VerticalLayout {
+                            padding: 12px;
+                            Text {
+                                text: root.console_text == "" ? "--- Server console output will appear here when running ---" : root.console_text;
+                                color: root.console_text == "" ? #4b5563 : #e2e8f0;
+                                font-size: 12px;
+                                font-family: "monospace";
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                // Command input footer
+                Rectangle {
+                    height: 58px;
+                    background: #18191d;
+
+                    Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        width: 100%;
+                        height: 1px;
+                        background: #252830;
+                    }
+
+                    HorizontalLayout {
+                        x: 16px;
+                        y: 10px;
+                        width: parent.width - 32px;
+                        height: parent.height - 20px;
+                        spacing: 12px;
+
+                        Text {
+                            text: ">";
+                            color: #60a5fa;
+                            font-size: 15px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+
+                        cmd_input := LineEdit {
+                            placeholder-text: root.server_running ? "Enter server command (status, kick, say, etc.)..." : "Start server to send commands...";
+                            enabled: root.server_running;
+                            horizontal-stretch: 1;
+                            accepted => {
+                                root.send_console_command(self.text);
+                                self.text = "";
+                            }
+                        }
+
+                        Button {
+                            text: "Send";
+                            enabled: root.server_running;
+                            clicked => {
+                                root.send_console_command(cmd_input.text);
+                                cmd_input.text = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Server Configuration Modal
+    if root.show_server_config: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #0000008c;
+
+        TouchArea {
+            clicked => { root.toggle_server_config(); }
+        }
+
+        Rectangle {
+            width: min(880px, parent.width - 40px);
+            height: min(720px, parent.height - 40px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: #15171c;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: #2c303c;
+            clip: true;
+
+            TouchArea {} // Prevent backdrop click from dismissing when clicking inside
+
+            VerticalLayout {
+                padding: 22px;
+                spacing: 14px;
+
+                // Header
+                HorizontalLayout {
+                    VerticalLayout {
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: "Server Settings";
+                            color: #f9fafb;
+                            font-size: 17px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: "Configures ServerConfig.toml in the server directory";
+                            color: #6b7280;
+                            font-size: 11px;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 6px;
+                        background: cfg_close_touch.has-hover ? #2e3340 : #1f222a;
+                        border-width: 1px;
+                        border-color: #2e3340;
+
+                        cfg_close_touch := TouchArea {
+                            clicked => { root.toggle_server_config(); }
+                        }
+
+                        Text {
+                            text: "✕";
+                            color: #9ca3af;
+                            font-size: 13px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Row 1: Server Name & Port (proportional 3:1 split)
+                HorizontalLayout {
+                    spacing: 16px;
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 3;
+                        Text { text: "Server Name"; color: #9ca3af; font-size: 12px; font-weight: 500; }
+                        cfg_name_in := LineEdit { text: root.cfg_name; }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        Text { text: "Port"; color: #9ca3af; font-size: 12px; font-weight: 500; }
+                        cfg_port_in := LineEdit { text: root.cfg_port; }
+                    }
+                }
+
+                // Row 2: Description
+                VerticalLayout {
+                    spacing: 4px;
+                    Text { text: "Description"; color: #9ca3af; font-size: 12px; font-weight: 500; }
+                    cfg_desc_in := LineEdit { text: root.cfg_desc; }
+                }
+
+                // Row 3: Max Players, Max Cars, and AuthKey (proportional 1:1:2 split)
+                HorizontalLayout {
+                    spacing: 16px;
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        Text { text: "Max Players"; color: #9ca3af; font-size: 12px; font-weight: 500; }
+                        cfg_max_players_in := LineEdit { text: root.cfg_max_players; }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        Text { text: "Max Cars / Player"; color: #9ca3af; font-size: 12px; font-weight: 500; }
+                        cfg_max_cars_in := LineEdit { text: root.cfg_max_cars; }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 2;
+                        Text { text: "AuthKey"; color: #9ca3af; font-size: 12px; font-weight: 500; }
+                        cfg_auth_in := LineEdit { text: root.cfg_auth_key; input-type: password; }
+                    }
+                }
+
+                // Row 4: Private Server Checkbox (dedicated row)
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    cfg_priv_cb := CustomCheckbox {
+                        checked: root.cfg_private;
+                        toggled => { root.cfg_private = !root.cfg_private; }
+                    }
+                    Text {
+                        text: "Private Server";
+                        color: #d1d5db;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Map Selection Section
+                VerticalLayout {
+                    spacing: 8px;
+                    vertical-stretch: 1;
+
+                    HorizontalLayout {
+                        Text {
+                            text: "Select Map";
+                            color: #f3f4f6;
+                            font-size: 13px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: "Active: " + root.cfg_map;
+                            color: #60a5fa;
+                            font-size: 11px;
+                            font-family: "monospace";
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+
+                    // Main Map Selector: Left = Scrollable Map Cards, Right = Large HD Map Preview Panel!
+                    HorizontalLayout {
+                        spacing: 12px;
+                        vertical-stretch: 1;
+
+                        // Left: Scrollable Map List
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            border-radius: 8px;
+                            background: #111317;
+                            border-width: 1px;
+                            border-color: #232733;
+                            clip: true;
+
+                            ScrollView {
+                                VerticalLayout {
+                                    padding: 8px;
+                                    spacing: 6px;
+
+                                    for map in root.map_items: Rectangle {
+                                        height: 58px;
+                                        border-radius: 6px;
+                                        border-width: root.cfg_map == map.path ? 1.5px : 1px;
+                                        border-color: root.cfg_map == map.path ? #3b82f6 : (m_touch.has-hover ? #475569 : #1f232d);
+                                        background: root.cfg_map == map.path ? #1b263b : (m_touch.has-hover ? #1c212c : #161820);
+
+                                        m_touch := TouchArea {
+                                            changed has-hover => {
+                                                if (self.has-hover) {
+                                                    root.preview_map_img = map.preview;
+                                                    root.preview_map_title = map.title;
+                                                    root.preview_map_badge = map.badge;
+                                                    root.preview_map_path = map.path;
+                                                }
+                                            }
+                                            clicked => {
+                                                root.cfg_map = map.path;
+                                                root.select_map(map.path);
+                                                root.preview_map_img = map.preview;
+                                                root.preview_map_title = map.title;
+                                                root.preview_map_badge = map.badge;
+                                                root.preview_map_path = map.path;
+                                            }
+                                        }
+
+                                        HorizontalLayout {
+                                            padding: 6px;
+                                            padding-left: 8px;
+                                            padding-right: 10px;
+                                            spacing: 10px;
+
+                                            // Map Thumbnail
+                                            Rectangle {
+                                                width: 80px;
+                                                height: 46px;
+                                                border-radius: 4px;
+                                                background: #0d0f13;
+                                                border-width: 1px;
+                                                border-color: m_touch.has-hover ? #3b82f6 : #232733;
+                                                clip: true;
+
+                                                Image {
+                                                    source: map.preview;
+                                                    width: 100%;
+                                                    height: 100%;
+                                                    image-fit: cover;
+                                                }
+                                            }
+
+                                            // Title and Path
+                                            VerticalLayout {
+                                                alignment: center;
+                                                spacing: 2px;
+                                                horizontal-stretch: 1;
+
+                                                Text {
+                                                    text: map.title;
+                                                    color: root.cfg_map == map.path ? #93c5fd : (m_touch.has-hover ? #ffffff : #e2e8f0);
+                                                    font-size: 13px;
+                                                    font-weight: 600;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+
+                                                Text {
+                                                    text: map.path;
+                                                    color: #94a3b8;
+                                                    font-size: 10px;
+                                                    font-family: "monospace";
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+                                            }
+
+                                            // Badge and Selected status
+                                            HorizontalLayout {
+                                                spacing: 6px;
+                                                alignment: center;
+
+                                                Rectangle {
+                                                    height: 20px;
+                                                    border-radius: 4px;
+                                                    background: map.badge == "MOD" ? #3b1d54 : #1e293b;
+                                                    border-width: 1px;
+                                                    border-color: map.badge == "MOD" ? #6d28d9 : #334155;
+
+                                                    HorizontalLayout {
+                                                        padding-left: 6px;
+                                                        padding-right: 6px;
+                                                        Text {
+                                                            text: map.badge;
+                                                            color: map.badge == "MOD" ? #c084fc : #93c5fd;
+                                                            font-size: 9px;
+                                                            font-weight: 700;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+
+                                                if root.cfg_map == map.path: Rectangle {
+                                                    height: 20px;
+                                                    border-radius: 4px;
+                                                    background: #064e3b;
+                                                    border-width: 1px;
+                                                    border-color: #10b981;
+
+                                                    HorizontalLayout {
+                                                        padding-left: 6px;
+                                                        padding-right: 6px;
+                                                        Text {
+                                                            text: "ACTIVE";
+                                                            color: #34d399;
+                                                            font-size: 9px;
+                                                            font-weight: 700;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Right: Dedicated Enlarged HD Map Preview Panel!
+                        Rectangle {
+                            width: 290px;
+                            border-radius: 8px;
+                            background: #111317;
+                            border-width: 1px;
+                            border-color: #232733;
+                            clip: true;
+
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 10px;
+
+                                // Large Widescreen Map Screenshot (270x152)
+                                Rectangle {
+                                    height: 152px;
+                                    border-radius: 6px;
+                                    background: #0d0f13;
+                                    border-width: 1px;
+                                    border-color: #2c303c;
+                                    clip: true;
+
+                                    Image {
+                                        source: root.preview_map_img;
+                                        width: 100%;
+                                        height: 100%;
+                                        image-fit: cover;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    spacing: 4px;
+                                    vertical-stretch: 1;
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Text {
+                                            text: root.preview_map_title;
+                                            color: #ffffff;
+                                            font-size: 14px;
+                                            font-weight: 700;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+
+                                        if root.preview_map_badge != "": Rectangle {
+                                            border-radius: 4px;
+                                            background: root.preview_map_badge == "MOD" ? #7e22ce30 : #1d4ed830;
+                                            border-width: 1px;
+                                            border-color: root.preview_map_badge == "MOD" ? #a855f7 : #3b82f6;
+                                            height: 18px;
+                                            HorizontalLayout {
+                                                padding-left: 6px;
+                                                padding-right: 6px;
+                                                Text {
+                                                    text: root.preview_map_badge;
+                                                    color: root.preview_map_badge == "MOD" ? #c084fc : #93c5fd;
+                                                    font-size: 9px;
+                                                    font-weight: 700;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: root.preview_map_path;
+                                        color: #94a3b8;
+                                        font-size: 10px;
+                                        font-family: "monospace";
+                                        overflow: elide;
+                                    }
+
+                                    Rectangle { vertical-stretch: 1; }
+                                }
+                            }
+                        }
+                    }
+
+                    // Manual Map Path Override LineEdit
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "Custom Path:";
+                            color: #9ca3af;
+                            font-size: 11px;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                        }
+                        cfg_map_in := LineEdit {
+                            text: root.cfg_map;
+                            horizontal-stretch: 1;
+                            edited(val) => { root.cfg_map = val; }
+                        }
+                    }
+                }
+
+                // Action buttons
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: end;
+                    padding-top: 4px;
+
+                    Button {
+                        text: "Cancel";
+                        clicked => { root.toggle_server_config(); }
+                    }
+
+                    Button {
+                        text: "Save Configuration";
+                        primary: true;
+                        clicked => {
+                            root.save_server_config(
+                                cfg_name_in.text,
+                                cfg_desc_in.text,
+                                root.cfg_map,
+                                cfg_max_players_in.text,
+                                cfg_max_cars_in.text,
+                                cfg_port_in.text,
+                                root.cfg_private,
+                                cfg_auth_in.text
+                            );
+                        }
                     }
                 }
             }
