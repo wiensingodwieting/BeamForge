@@ -33,14 +33,10 @@ BIN="./target/release/beamforge"
 
 # Run compiled release binary directly if present
 if [ -x "$BIN" ]; then
-    if "$BIN" "$@"; then
-        exit 0
-    fi
+    exec "$BIN" "$@"
 fi
 
-# Fallback: if running directly failed or binary missing, build/run via nix-shell or cargo
-if [ -f "/etc/NIXOS" ] && command -v nix-shell >/dev/null 2>&1; then
-    exec nix-shell --run "cargo run --release -- $*"
-else
-    exec cargo run --release -- "$@"
-fi
+# Fallback: if binary is missing, compile release directly using cached nix libs
+echo "Building BeamForge release binary..."
+TMPDIR=/tmp TEMPDIR=/tmp TMP=/tmp cargo build --release
+exec "$BIN" "$@"

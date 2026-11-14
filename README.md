@@ -12,8 +12,10 @@ It manages server mods via symbolic links, allowing you to switch between mod co
 
 - **Profile management**: Create, save, and switch between mod configurations (e.g. drift, rally, vanilla).
 - **Symlink deployment**: Applies mods by linking directly into `Resources/Client` instead of copying files.
-- **Mod indexing**: Scans archive metadata to group mods by category (cars, maps, wheels) and tracks file sizes.
-- **Search & filtering**: Filter mods by title, archive name, category, or active status.
+- **Vehicle & Map Thumbnails**: Asynchronous background streaming preview pipeline (52×34px) with in-memory caching.
+- **Smart Conflict Detector**: Real-time bilateral conflict detection highlighting colliding internal game files between active mods.
+- **In-App Mod Management**: Reveal archives in native file manager via D-Bus and safely delete mods directly from UI.
+- **Mod indexing & search**: Scans archive metadata to group mods by category (cars, maps, wheels) and instant search.
 - **Interactive Server Console**: Live server logs with real-time command input (`stdin`) directly from the UI.
 - **ServerConfig.toml Editor**: Visual configuration of server parameters (name, description, port, max players/cars, auth key, privacy).
 - **Map Selector with HD Preview**: Browse official vanilla levels and scanned mod maps with instant widescreen previews on hover.

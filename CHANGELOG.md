@@ -5,6 +5,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [0.3.0] — 2026-11-14
+
+### 🌟 Highlights
+BeamForge 0.3.0 is a massive update introducing a high-performance **Asynchronous Streaming Mod Preview System**, an intelligent **Real-Time Mod Conflict Detector**, built-in **Mod Deletion**, one-click **File Manager integration**, pixel-perfect **UI & Layout Alignments**, and an overhauled application icon optimized for modern Wayland desktop environments.
+
+---
+
+### 🚀 New Features & Enhancements
+
+- **⚡ Asynchronous Streaming Preview System (Zero UI Freezes)**:
+  - Extracted thumbnail generation into an isolated background worker thread with `std::sync::mpsc` channels.
+  - UI streams updates dynamically in real time without stalling startup or interface interaction.
+  - In-memory `image_cache` (`HashMap<String, Option<slint::Image>>`) caches loaded images, guaranteeing smooth, stutter-free 60+ FPS scrolling across libraries with 160+ mods.
+  - Upgraded preview thumbnail resolution to **52×34px** inside a 44px row height.
+  - Previews are cached persistently in `.previews/` and preserved across rebuilds.
+  - Heuristic asset detection skips internal material maps (`_d.`, `_n.`, `_spec.`, `_ao.`, `uv_`, skins, liveries) and accurately targets canonical vehicle `default.jpg|png|webp` and map overview screenshots.
+  - Clean fallback category badges (`🚗`, `🗺`, `🛞`, `📦`) when no custom image is bundled in the archive.
+
+- **⚠️ Smart Real-Time Mod Conflict Detector**:
+  - Automatically scans all active mod zip archives for colliding internal game files (e.g., duplicated `.jbeam` definitions, conflicting vehicle directories, overlapping map assets).
+  - Recalculates dynamically in real time on every mod checkbox toggle, `Select all`, and `Deselect all`.
+  - Bilateral conflict marking: highlights both active mods that collide with each other with a red `[ ⚠ CONFLICT ]` badge. Clicking the badge reveals exact file paths and colliding mods in the status drawer.
+  - Disabling either conflicting mod immediately resolves and clears the warning on both.
+  - Global `[⚠ N Conflicts Detected]` counter badge in the top statistics bar.
+
+- **🗑️ In-App Mod Deletion with Confirmation Modal**:
+  - Added dedicated delete action button `[🗑]` for each mod item.
+  - Features an intuitive modal confirmation dialog showing the mod name.
+  - Safely unlinks active symlinks from the server folder, deletes the `.zip` from disk storage, and invalidates cached metadata.
+
+- **📁 Native File Manager Integration ("Show in Folder")**:
+  - Added `[📁]` button on mod cards.
+  - Leverages standard FreeDesktop D-Bus (`org.freedesktop.FileManager1.ShowItems`) to open the system file manager (Nautilus, Dolphin, etc.) and pre-select/highlight the exact `.zip` archive.
+  - Graceful fallback to `xdg-open` parent folder if DBus is unavailable.
+
+- **🎨 Pixel-Perfect UI Centering & Alignment**:
+  - Re-architected Slint item layouts: all row controls (checkbox, thumbnail, title, category badge, conflict badge, size, folder button, and trash button) are vertically centered on the 44px row axis.
+  - Fixed conflict badge alignment: the `[ ⚠ CONFLICT ]` alert icon now shares the exact vertical center with the text rather than snapping to the top edge.
+  - Restored top statistics bar spacing: mod selection stats span the left side while action buttons dock flush to the right edge.
+  - Cleaned up top error/status banner with vector SVG alert icon.
+
+- **🖼️ App & Window Icon Redesign**:
+  - Optimized `beamforge.svg` by eliminating redundant transparent margins and expanding the squircle container to the full 128×128 canvas.
+  - Scaled up the `BF` monogram and forge underline (+28%), matching the visual height and weight of the window title text in niri and other Wayland compositors.
+
+---
+
 ## [0.2.0] — 2026-11-12
 
 ### 🌟 Highlights

@@ -35,6 +35,8 @@ struct ModMeta {
     mtime: u64,
     #[serde(default)]
     map_path: String,
+    #[serde(default)]
+    preview_file: String,
 }
 
 fn sanitize_profile_name(name: &str) -> String {
@@ -203,6 +205,7 @@ fn parse_mod_zip(path: &Path, mtime: u64, size_bytes: u64) -> ModMeta {
         size_str,
         mtime,
         map_path,
+        preview_file: String::new(),
     }
 }
 
@@ -378,13 +381,16 @@ fn extract_zip_preview(zip_path: &Path, out_base: &Path) -> Option<PathBuf> {
     let mut archive = zip::ZipArchive::new(file).ok()?;
 
     let mut best_index = None;
-    let mut best_priority = 0;
+    let mut best_priority = 0i32;
     let mut best_ext = "jpg";
 
     for i in 0..archive.len() {
         if let Ok(entry) = archive.by_index(i) {
             if let Ok(entry_name) = entry.name() {
                 let name = entry_name.to_lowercase();
+                if name.starts_with("__macosx") || name.ends_with('/') {
+                    continue;
+                }
                 let ext = if name.ends_with(".png") {
                     "png"
                 } else if name.ends_with(".jpg") || name.ends_with(".jpeg") {
@@ -393,17 +399,80 @@ fn extract_zip_preview(zip_path: &Path, out_base: &Path) -> Option<PathBuf> {
                     continue;
                 };
 
-                if name.contains("preview") && best_priority < 3 {
+                // Skip texture/material files — these are NOT preview images
+                let basename = name.rsplit('/').next().unwrap_or(&name);
+                if basename.contains("_d.") || basename.contains("_n.") || basename.contains("_s.")
+                    || basename.contains("_nm.") || basename.contains("_spec.")
+                    || basename.contains("_diff.") || basename.contains("_norm.")
+                    || basename.contains("_ao.") || basename.contains("_rough.")
+                    || basename.contains("_metal.") || basename.contains("_emissive.")
+                    || basename.contains("_alpha.") || basename.contains("_mask.")
+                    || basename.contains("_env.") || basename.contains("_gloss.")
+                    || basename.contains("_c.") || basename.contains("_b.")
+                    || basename.contains("uv_") || basename.contains("_uv.") || basename.contains("uvs")
+                    || basename.contains("skin") || basename.contains("livery")
+                    || basename.contains("glass") || basename.contains("gauge")
+                    || basename.contains("cubemap") || basename.contains("reflection")
+                    || basename.contains("suspension") || basename.contains("brake")
+                {
+                    continue;
+                }
+                // Skip files deep in skins/ or textures/ subdirectories
+                if name.contains("/skins/") || name.contains("/textures/")
+                    || name.contains("/materials/") || name.contains("/liveries/")
+                {
+                    continue;
+                }
+
+                // Priority: higher = better match for a vehicle/map preview
+                let parts: Vec<&str> = name.split('/').collect();
+                let depth = parts.len();
+
+                let is_vehicle = name.starts_with("vehicles/");
+                let is_level = name.starts_with("levels/");
+
+                // Check if image filename contains model folder name (e.g. vehicles/jzx100/jzx100.png)
+                let matches_model_name = if is_vehicle && depth >= 3 {
+                    let model_folder = parts[1];
+                    !model_folder.is_empty() && basename.contains(model_folder)
+                } else {
+                    false
+                };
+
+                let priority = if is_vehicle && (basename == "default.jpg" || basename == "default.png" || basename == "default.webp") {
+                    // Canonical official vehicle preview config
+                    100
+                } else if is_level && basename.contains("preview") {
+                    // Level preview screenshot
+                    95
+                } else if is_level && basename.contains("quickrace") {
+                    // Quickrace map thumbnail
+                    90
+                } else if is_vehicle && basename.contains("preview") {
+                    85
+                } else if basename == "icon.png" || basename == "icon.jpg" || basename == "icon.webp" {
+                    80
+                } else if basename.contains("thumbnail") {
+                    75
+                } else if matches_model_name {
+                    // Filename contains the vehicle name (e.g. jzx100.png in jzx100 folder)
+                    70
+                } else if is_vehicle && depth >= 3 && depth <= 5 {
+                    // Any clean non-texture image in vehicle folder
+                    55
+                } else if is_level && depth >= 3 && depth <= 5 {
+                    // Any clean non-texture image in level folder
+                    50
+                } else if depth <= 2 || basename.contains("default") {
+                    // Root-level or default image
+                    35
+                } else {
+                    -1
+                };
+
+                if priority > best_priority {
                     best_index = Some(i);
-                    best_priority = 3;
-                    best_ext = ext;
-                } else if name.contains("quickrace") && best_priority < 2 {
-                    best_index = Some(i);
-                    best_priority = 2;
-                    best_ext = ext;
-                } else if name.starts_with("levels/") && best_priority < 1 {
-                    best_index = Some(i);
-                    best_priority = 1;
+                    best_priority = priority;
                     best_ext = ext;
                 }
             }
@@ -413,9 +482,18 @@ fn extract_zip_preview(zip_path: &Path, out_base: &Path) -> Option<PathBuf> {
     if let Some(idx) = best_index {
         if let Ok(entry) = archive.by_index(idx) {
             let mut buf = Vec::new();
-            let mut take = entry.take(4 * 1024 * 1024);
-            if take.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                let target = out_base.with_extension(best_ext);
+            let mut take = entry.take(16 * 1024 * 1024);
+            if take.read_to_end(&mut buf).is_ok() && buf.len() > 8 {
+                let actual_ext = if buf.starts_with(b"\x89PNG\r\n\x1a\n") {
+                    "png"
+                } else if buf.starts_with(b"\xff\xd8\xff") {
+                    "jpg"
+                } else if buf.starts_with(b"RIFF") && buf.len() > 12 && &buf[8..12] == b"WEBP" {
+                    "webp"
+                } else {
+                    best_ext
+                };
+                let target = out_base.with_extension(actual_ext);
                 if fs::write(&target, &buf).is_ok() {
                     return Some(target);
                 }
@@ -423,6 +501,152 @@ fn extract_zip_preview(zip_path: &Path, out_base: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn reveal_in_file_manager(path: &Path) {
+    if let Ok(canon) = path.canonicalize() {
+        let uri = format!("file://{}", canon.display());
+        // 1. Try DBus FileManager1 ShowItems (standard across desktop environments)
+        let dbus_res = Command::new("gdbus")
+            .args([
+                "call",
+                "--session",
+                "--dest=org.freedesktop.FileManager1",
+                "--object-path=/org/freedesktop/FileManager1",
+                "--method=org.freedesktop.FileManager1.ShowItems",
+                &format!("['{}']", uri),
+                "",
+            ])
+            .spawn();
+
+        if let Ok(mut child) = dbus_res {
+            if let Ok(status) = child.wait() {
+                if status.success() {
+                    return;
+                }
+            }
+        }
+
+        // 2. Direct file manager selection commands
+        if Command::new("nautilus").arg("--select").arg(&canon).spawn().is_ok() {
+            return;
+        }
+        if Command::new("dolphin").arg("--select").arg(&canon).spawn().is_ok() {
+            return;
+        }
+
+        // 3. Fallback: open parent folder
+        if let Some(parent) = canon.parent() {
+            let _ = Command::new("xdg-open").arg(parent).spawn();
+        }
+    }
+}
+
+fn start_background_preview_extraction(
+    ui_weak: slint::Weak<AppWindow>,
+    state: Rc<RefCell<AppState>>,
+) {
+    let (storage, missing): (String, Vec<String>) = {
+        let st = state.borrow();
+        let previews_dir = PathBuf::from(".previews");
+        let _ = fs::create_dir_all(&previews_dir);
+        let list: Vec<String> = st
+            .all_mods
+            .iter()
+            .filter_map(|m| {
+                if m.preview_file == "none" {
+                    return None;
+                }
+                if !m.preview_file.is_empty() && Path::new(&m.preview_file).exists() {
+                    return None;
+                }
+                Some(m.filename.clone())
+            })
+            .collect();
+        (st.config.storage_path.clone(), list)
+    };
+
+    if missing.is_empty() {
+        return;
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
+
+    std::thread::spawn(move || {
+        let previews_dir = PathBuf::from(".previews");
+        let _ = fs::create_dir_all(&previews_dir);
+
+        for filename in missing {
+            let zip_path = Path::new(&storage).join(&filename);
+            let safe_name = filename.replace(|c: char| !c.is_alphanumeric() && c != '.', "_");
+            let out_base = previews_dir.join(&safe_name);
+            let res = extract_zip_preview(&zip_path, &out_base);
+            let target_str = if let Some(target) = res {
+                target.to_string_lossy().into_owned()
+            } else {
+                "none".to_string()
+            };
+            let _ = tx.send((filename, target_str));
+        }
+    });
+
+    // Stream updates live to main thread so UI updates immediately as each mod is processed
+    let timer = Rc::new(slint::Timer::default());
+    let timer_clone = timer.clone();
+    timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(100), move || {
+        let mut any_new = false;
+        let mut updates = Vec::new();
+        let mut done = false;
+
+        loop {
+            match rx.try_recv() {
+                Ok((fname, pfile)) => {
+                    updates.push((fname, pfile));
+                    any_new = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+            }
+        }
+
+        if any_new {
+            let mut st = state.borrow_mut();
+            let mut cache: HashMap<String, ModMeta> = fs::read_to_string(CACHE_FILE)
+                .ok()
+                .and_then(|data| serde_json::from_str(&data).ok())
+                .unwrap_or_default();
+
+            for (fname, pfile) in updates {
+                if let Some(m) = st.all_mods.iter_mut().find(|m| m.filename == fname) {
+                    m.preview_file = pfile.clone();
+                    if pfile != "none" {
+                        if let Ok(img) = slint::Image::load_from_path(Path::new(&pfile)) {
+                            st.image_cache.insert(fname.clone(), Some(img));
+                        }
+                    } else {
+                        st.image_cache.insert(fname.clone(), None);
+                    }
+                }
+                if let Some(cm) = cache.get_mut(&fname) {
+                    cm.preview_file = pfile;
+                }
+            }
+            let _ = fs::write(CACHE_FILE, serde_json::to_string(&cache).unwrap_or_default());
+            if let Some(ui) = ui_weak.upgrade() {
+                st.sync_mods_ui(&ui);
+            }
+        }
+
+        if done {
+            timer_clone.stop();
+        }
+    });
+
+    // Keep timer alive by leaking it (it stops itself after receiving)
+    std::mem::forget(timer);
 }
 
 struct AppState {
@@ -442,6 +666,9 @@ struct AppState {
     log_receiver: Option<Receiver<String>>,
     show_console: bool,
     show_server_config: bool,
+    image_cache: HashMap<String, Option<slint::Image>>,
+    active_conflicts: HashMap<String, String>,
+    mod_files_cache: HashMap<String, Vec<String>>,
 }
 
 impl AppState {
@@ -471,6 +698,9 @@ impl AppState {
             log_receiver: None,
             show_console: false,
             show_server_config: false,
+            image_cache: HashMap::new(),
+            active_conflicts: HashMap::new(),
+            mod_files_cache: HashMap::new(),
         };
         state.scan_mods();
         state.scan_presets();
@@ -480,6 +710,7 @@ impl AppState {
             state.load_preset(&name);
         }
 
+        state.recalculate_conflicts();
         state
     }
 
@@ -635,6 +866,75 @@ impl AppState {
         self.presets.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
+    fn recalculate_conflicts(&mut self) {
+        let storage = Path::new(&self.config.storage_path);
+        let mut file_to_mod: HashMap<String, String> = HashMap::new();
+        let mut mod_conflicts: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+        for mod_name in &self.active_mods {
+            if !self.mod_files_cache.contains_key(mod_name) {
+                let zip_path = storage.join(mod_name);
+                let mut list = Vec::new();
+                if let Ok(file) = fs::File::open(&zip_path) {
+                    if let Ok(mut archive) = zip::ZipArchive::new(file) {
+                        for i in 0..archive.len() {
+                            if let Ok(entry) = archive.by_index(i) {
+                                if let Ok(name) = entry.name() {
+                                    if !name.ends_with('/') && !name.starts_with("__MACOSX") {
+                                        let lower = name.to_lowercase();
+                                        // Ignore global metadata, licenses, thumbnails and shared common asset directories
+                                        if lower != "info.json"
+                                            && lower != "mod_info.json"
+                                            && lower != "icon.png"
+                                            && lower != "preview.png"
+                                            && lower != "preview.jpg"
+                                            && !lower.ends_with(".txt")
+                                            && !lower.ends_with(".md")
+                                            && !lower.starts_with("vehicles/common/")
+                                            && !lower.starts_with("levels/common/")
+                                            && !lower.starts_with("art/")
+                                            && !lower.starts_with("ui/")
+                                        {
+                                            list.push(name.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                self.mod_files_cache.insert(mod_name.clone(), list);
+            }
+
+            if let Some(files) = self.mod_files_cache.get(mod_name) {
+                for file in files {
+                    let lower = file.to_lowercase();
+                    if let Some(other_mod) = file_to_mod.get(&lower) {
+                        if other_mod != mod_name {
+                            mod_conflicts.entry(mod_name.clone()).or_default().push((other_mod.clone(), file.clone()));
+                            mod_conflicts.entry(other_mod.clone()).or_default().push((mod_name.clone(), file.clone()));
+                        }
+                    } else {
+                        file_to_mod.insert(lower, mod_name.clone());
+                    }
+                }
+            }
+        }
+
+        let mut result = HashMap::new();
+        for (m, list) in mod_conflicts {
+            if let Some((other, file)) = list.first() {
+                let more = if list.len() > 1 {
+                    format!(" (+{} other files)", list.len() - 1)
+                } else {
+                    String::new()
+                };
+                result.insert(m, format!("Overlaps with '{}': {}{}", other, file, more));
+            }
+        }
+        self.active_conflicts = result;
+    }
+
     fn load_preset(&mut self, name: &str) {
         let safe_name = sanitize_profile_name(name);
         if safe_name.is_empty() { return; }
@@ -645,6 +945,7 @@ impl AppState {
             .and_then(|d| serde_json::from_str(&d).ok())
             .unwrap_or_default();
         self.active_mods = mods.into_iter().collect();
+        self.recalculate_conflicts();
     }
 
     fn save_preset_by_name(&mut self, name: &str) -> Result<(), String> {
@@ -770,7 +1071,7 @@ impl AppState {
         self.sync_mods_ui(ui);
     }
 
-    fn sync_mods_ui(&self, ui: &AppWindow) {
+    fn sync_mods_ui(&mut self, ui: &AppWindow) {
         let query = self.search_query.to_lowercase();
         let cat = &self.category_filter;
         let sub = &self.sub_filter;
@@ -790,6 +1091,9 @@ impl AppState {
         ui.set_active_count(active as i32);
         ui.set_inactive_count(inactive as i32);
         ui.set_total_size_str(format_size(total_active_bytes).into());
+
+        // Feature 3: Active mod conflicts
+        ui.set_conflict_count(self.active_conflicts.len() as i32);
 
         let filtered: Vec<ModItem> = self
             .all_mods
@@ -811,17 +1115,85 @@ impl AppState {
 
                 matches_cat && matches_query && matches_sub
             })
-            .map(|m| ModItem {
-                name: m.filename.clone().into(),
-                title: m.title.clone().into(),
-                category: m.category.clone().into(),
-                author: m.author.clone().into(),
-                size_str: m.size_str.clone().into(),
-                checked: self.active_mods.contains(&m.filename),
+            .map(|m| {
+                let (has_conflict, conflict_desc) = if let Some(desc) = self.active_conflicts.get(&m.filename) {
+                    (true, desc.clone())
+                } else {
+                    (false, String::new())
+                };
+
+                let (has_preview, img) = match self.image_cache.get(&m.filename) {
+                    Some(Some(img)) => (true, img.clone()),
+                    Some(None) => (false, slint::Image::default()),
+                    None => {
+                        let img_opt = if !m.preview_file.is_empty() && m.preview_file != "none" {
+                            let p = Path::new(&m.preview_file);
+                            if p.exists() {
+                                slint::Image::load_from_path(p).ok()
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        let has_p = img_opt.is_some();
+                        let fallback_img = img_opt.clone().unwrap_or_default();
+                        self.image_cache.insert(m.filename.clone(), img_opt);
+                        (has_p, fallback_img)
+                    }
+                };
+
+                ModItem {
+                    name: m.filename.clone().into(),
+                    title: m.title.clone().into(),
+                    category: m.category.clone().into(),
+                    author: m.author.clone().into(),
+                    size_str: m.size_str.clone().into(),
+                    checked: self.active_mods.contains(&m.filename),
+                    has_preview,
+                    preview: img,
+                    has_conflict,
+                    conflict_desc: conflict_desc.into(),
+                }
             })
             .collect();
 
         ui.set_mods(ModelRc::new(VecModel::from(filtered)));
+    }
+
+    fn delete_mod_from_storage(&mut self, filename: &str) -> Result<(), String> {
+        let safe_filename = filename.replace("..", "").replace('/', "").replace('\\', "");
+        let storage_file = Path::new(&self.config.storage_path).join(&safe_filename);
+
+        if !storage_file.exists() {
+            return Err("File not found in storage".into());
+        }
+
+        // Remove active symlink if present
+        let target_link = Path::new(&self.config.target_path).join(&safe_filename);
+        if target_link.exists() || target_link.is_symlink() {
+            let _ = fs::remove_file(&target_link);
+        }
+
+        // Delete archive from storage disk
+        fs::remove_file(&storage_file).map_err(|e| format!("Delete error: {}", e))?;
+
+        // Update in-memory state
+        self.all_mods.retain(|m| m.filename != safe_filename);
+        self.active_mods.remove(&safe_filename);
+        self.image_cache.remove(&safe_filename);
+        self.mod_files_cache.remove(&safe_filename);
+        self.recalculate_conflicts();
+
+        // Update cache
+        let mut cache: HashMap<String, ModMeta> = fs::read_to_string(CACHE_FILE)
+            .ok()
+            .and_then(|data| serde_json::from_str(&data).ok())
+            .unwrap_or_default();
+        cache.remove(&safe_filename);
+        let _ = fs::write(CACHE_FILE, serde_json::to_string(&cache).unwrap_or_default());
+
+        Ok(())
     }
 }
 
@@ -845,6 +1217,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let state = Rc::new(RefCell::new(AppState::new()));
 
     state.borrow_mut().sync_ui(&ui);
+    start_background_preview_extraction(ui.as_weak(), state.clone());
 
     // Background timer to poll server process state and stream logs
     let timer = slint::Timer::default();
@@ -1018,6 +1391,7 @@ fn main() -> Result<(), slint::PlatformError> {
             } else {
                 st.active_mods.remove(name.as_str());
             }
+            st.recalculate_conflicts();
             if let Some(ui) = ui_weak.upgrade() {
                 st.sync_mods_ui(&ui);
             }
@@ -1050,6 +1424,7 @@ fn main() -> Result<(), slint::PlatformError> {
             for m in to_add {
                 st.active_mods.insert(m);
             }
+            st.recalculate_conflicts();
             if let Some(ui) = ui_weak.upgrade() {
                 st.sync_mods_ui(&ui);
             }
@@ -1082,6 +1457,7 @@ fn main() -> Result<(), slint::PlatformError> {
             for m in to_remove {
                 st.active_mods.remove(&m);
             }
+            st.recalculate_conflicts();
             if let Some(ui) = ui_weak.upgrade() {
                 st.sync_mods_ui(&ui);
             }
@@ -1363,9 +1739,10 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // Reveal mod in file manager
+    // Reveal mod in file manager (Feature 2)
     {
         let state = state.clone();
+        let ui_weak = ui.as_weak();
         ui.on_open_mod_file(move |mod_name| {
             let name_str = mod_name.as_str();
             if name_str.contains('/') || name_str.contains('\\') || name_str.contains("..") {
@@ -1375,10 +1752,51 @@ fn main() -> Result<(), slint::PlatformError> {
             let storage = Path::new(&st.config.storage_path);
             let file = storage.join(name_str);
             if file.exists() {
-                let _ = Command::new("xdg-open").arg(&file).spawn();
+                reveal_in_file_manager(&file);
+                show_toast(&ui_weak, format!("Revealed '{}' in file manager", name_str), false);
             } else if storage.exists() {
                 let _ = Command::new("xdg-open").arg(storage).spawn();
             }
+        });
+    }
+
+    // Request delete mod (Feature 4)
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_request_delete_mod(move |name| {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_mod_to_delete(name);
+                ui.set_show_delete_modal(true);
+            }
+        });
+    }
+
+    // Confirm delete mod (Feature 4)
+    {
+        let state = state.clone();
+        let ui_weak = ui.as_weak();
+        ui.on_confirm_delete_mod(move |name| {
+            let mut st = state.borrow_mut();
+            let res = st.delete_mod_from_storage(&name);
+            if let Some(ui) = ui_weak.upgrade() {
+                match res {
+                    Ok(_) => {
+                        st.sync_ui(&ui);
+                        show_toast(&ui_weak, format!("Deleted '{}' from storage", name), false);
+                    }
+                    Err(e) => {
+                        show_toast(&ui_weak, format!("Failed to delete: {}", e), true);
+                    }
+                }
+            }
+        });
+    }
+
+    // Show conflict details toast (Feature 3)
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_show_conflict_details(move |name, desc| {
+            show_toast(&ui_weak, format!("Conflict in '{}': {}", name, desc), true);
         });
     }
 

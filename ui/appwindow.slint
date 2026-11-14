@@ -8,6 +8,10 @@ export struct ModItem {
     author: string,
     size_str: string,
     checked: bool,
+    has_preview: bool,
+    preview: image,
+    has_conflict: bool,
+    conflict_desc: string,
 }
 
 export struct PresetItem {
@@ -146,12 +150,14 @@ component ActionButton {
             spacing: 6px;
             alignment: center;
 
-            if root.has_icon: Image {
-                source: root.icon;
-                width: 14px;
-                height: 14px;
-                colorize: root.is_primary ? #ffffff : (touch.has-hover ? #ffffff : #9ca3af);
-                y: (parent.height - self.height) / 2;
+            if root.has_icon: VerticalLayout {
+                alignment: center;
+                Image {
+                    source: root.icon;
+                    width: 14px;
+                    height: 14px;
+                    colorize: root.is_primary ? #ffffff : (touch.has-hover ? #ffffff : #9ca3af);
+                }
             }
 
             Text {
@@ -307,6 +313,9 @@ export component AppWindow inherits Window {
     in-out property <bool> cfg_private: true;
     in-out property <string> cfg_auth_key: "";
     in-out property <[MapItem]> map_items: [];
+    in-out property <int> conflict_count: 0;
+    in-out property <bool> show_delete_modal: false;
+    in-out property <string> mod_to_delete: "";
 
     // Callbacks
     callback select_preset(string);
@@ -330,6 +339,9 @@ export component AppWindow inherits Window {
     callback select_map(string);
     callback save_server_config(string, string, string, string, string, string, bool, string);
     callback open_mod_file(string);
+    callback request_delete_mod(string);
+    callback confirm_delete_mod(string);
+    callback show_conflict_details(string, string);
     callback pick_storage();
     callback pick_target();
     callback pick_server_bin();
@@ -390,7 +402,7 @@ export component AppWindow inherits Window {
 
         // Status banner
         if root.status_text != "": Rectangle {
-            height: 28px;
+            height: 30px;
             background: root.status_is_error ? #7f1d1d : #1e2638;
             border-width: 1px;
             border-color: root.status_is_error ? #ef4444 : #3b82f6;
@@ -398,7 +410,19 @@ export component AppWindow inherits Window {
             HorizontalLayout {
                 padding-left: 14px;
                 padding-right: 14px;
+                spacing: 8px;
                 alignment: center;
+
+                if root.status_is_error: VerticalLayout {
+                    alignment: center;
+                    Image {
+                        source: @image-url("icons/alert.svg");
+                        width: 14px;
+                        height: 14px;
+                        colorize: #fca5a5;
+                    }
+                }
+
                 Text {
                     text: root.status_text;
                     color: #ffffff;
@@ -770,6 +794,39 @@ export component AppWindow inherits Window {
                             horizontal-stretch: 1;
                         }
 
+                        if root.conflict_count > 0: Rectangle {
+                            height: 30px;
+                            border-radius: 6px;
+                            background: #7f1d1d40;
+                            border-width: 1px;
+                            border-color: #ef4444;
+
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 6px;
+                                alignment: center;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    Image {
+                                        source: @image-url("icons/alert.svg");
+                                        width: 13px;
+                                        height: 13px;
+                                        colorize: #f87171;
+                                    }
+                                }
+
+                                Text {
+                                    text: root.conflict_count + (root.conflict_count == 1 ? " Conflict Detected" : " Conflicts Detected");
+                                    color: #f87171;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
                         ActionButton {
                             text: "Select all";
                             clicked => { root.select_all(); }
@@ -838,7 +895,7 @@ export component AppWindow inherits Window {
 
                             for item in root.mods: Rectangle {
                                 width: parent.width;
-                                height: 38px;
+                                height: 44px;
                                 background: row_touch.has-hover ? #1c1e24 : transparent;
 
                                 Rectangle {
@@ -857,15 +914,46 @@ export component AppWindow inherits Window {
                                 HorizontalLayout {
                                     x: 0px;
                                     width: parent.width;
+                                    height: parent.height;
                                     padding-left: 12px;
                                     padding-right: 12px;
                                     spacing: 10px;
 
-                                    mod_cb := CustomCheckbox {
-                                        checked: item.checked;
-                                        y: (parent.height - self.height) / 2;
-                                        toggled => {
-                                            root.toggle_mod(item.name, !item.checked);
+                                    VerticalLayout {
+                                        alignment: center;
+                                        mod_cb := CustomCheckbox {
+                                            checked: item.checked;
+                                            toggled => {
+                                                root.toggle_mod(item.name, !item.checked);
+                                            }
+                                        }
+                                    }
+
+                                    // Thumbnail / Category Icon preview
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 52px;
+                                            height: 34px;
+                                            border-radius: 4px;
+                                            background: #0f1013;
+                                            border-width: 1px;
+                                            border-color: #242730;
+                                            clip: true;
+
+                                            if item.has_preview: Image {
+                                                source: item.preview;
+                                                width: 100%;
+                                                height: 100%;
+                                                image-fit: cover;
+                                            }
+
+                                            if !item.has_preview: Text {
+                                                text: item.category == "Cars" ? "🚗" : (item.category == "Maps" ? "🗺" : (item.category == "Wheels" ? "🛞" : "📦"));
+                                                font-size: 13px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
                                         }
                                     }
 
@@ -879,24 +967,69 @@ export component AppWindow inherits Window {
                                         horizontal-stretch: 0;
                                     }
 
-                                    Rectangle {
-                                        background: #202228;
-                                        border-radius: 4px;
-                                        border-width: 1px;
-                                        border-color: #2b2e37;
-                                        height: 20px;
-                                        horizontal-stretch: 0;
-                                        y: (parent.height - self.height) / 2;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            background: #202228;
+                                            border-radius: 4px;
+                                            border-width: 1px;
+                                            border-color: #2b2e37;
+                                            height: 20px;
+                                            horizontal-stretch: 0;
 
-                                        HorizontalLayout {
-                                            padding-left: 7px;
-                                            padding-right: 7px;
-                                            Text {
-                                                text: item.category;
-                                                color: #9ca3af;
-                                                font-size: 11px;
-                                                font-weight: 500;
-                                                vertical-alignment: center;
+                                            HorizontalLayout {
+                                                padding-left: 7px;
+                                                padding-right: 7px;
+                                                Text {
+                                                    text: item.category;
+                                                    color: #9ca3af;
+                                                    font-size: 11px;
+                                                    font-weight: 500;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if item.has_conflict: VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            height: 20px;
+                                            border-radius: 4px;
+                                            background: #7f1d1d40;
+                                            border-width: 1px;
+                                            border-color: #ef4444;
+                                            horizontal-stretch: 0;
+
+                                            conflict_touch := TouchArea {
+                                                clicked => {
+                                                    root.show_conflict_details(item.name, item.conflict_desc);
+                                                }
+                                            }
+
+                                            HorizontalLayout {
+                                                padding-left: 6px;
+                                                padding-right: 6px;
+                                                spacing: 5px;
+                                                alignment: center;
+
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    Image {
+                                                        source: @image-url("icons/alert.svg");
+                                                        width: 11px;
+                                                        height: 11px;
+                                                        colorize: #f87171;
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: "CONFLICT";
+                                                    color: #f87171;
+                                                    font-size: 10px;
+                                                    font-weight: 700;
+                                                    vertical-alignment: center;
+                                                }
                                             }
                                         }
                                     }
@@ -913,25 +1046,51 @@ export component AppWindow inherits Window {
                                         horizontal-stretch: 0;
                                     }
 
-                                    Rectangle {
-                                        width: 24px;
-                                        height: 24px;
-                                        horizontal-stretch: 0;
-                                        y: (parent.height - self.height) / 2;
-                                        border-radius: 4px;
-                                        background: link_touch.has-hover ? #ffffff15 : transparent;
+                                    // Open in file manager (Folder)
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 26px;
+                                            height: 26px;
+                                            border-radius: 4px;
+                                            background: folder_touch.has-hover ? #ffffff15 : transparent;
 
-                                        link_touch := TouchArea {
-                                            clicked => { root.open_mod_file(item.name); }
+                                            folder_touch := TouchArea {
+                                                clicked => { root.open_mod_file(item.name); }
+                                            }
+
+                                            Image {
+                                                source: @image-url("icons/folder.svg");
+                                                width: 14px;
+                                                height: 14px;
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                                colorize: folder_touch.has-hover ? #60a5fa : #6b7280;
+                                            }
                                         }
+                                    }
 
-                                        Image {
-                                            source: @image-url("icons/link.svg");
-                                            width: 14px;
-                                            height: 14px;
-                                            colorize: link_touch.has-hover ? #60a5fa : #6b7280;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
+                                    // Delete mod from storage (Trash)
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 26px;
+                                            height: 26px;
+                                            border-radius: 4px;
+                                            background: del_touch.has-hover ? #ef444425 : transparent;
+
+                                            del_touch := TouchArea {
+                                                clicked => { root.request_delete_mod(item.name); }
+                                            }
+
+                                            Image {
+                                                source: @image-url("icons/trash.svg");
+                                                width: 14px;
+                                                height: 14px;
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                                colorize: del_touch.has-hover ? #ef4444 : #6b7280;
+                                            }
                                         }
                                     }
                                 }
@@ -1643,6 +1802,121 @@ export component AppWindow inherits Window {
                                 root.cfg_private,
                                 cfg_auth_in.text
                             );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete Mod Confirmation Modal
+    if root.show_delete_modal: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000088;
+
+        TouchArea {
+            clicked => { root.show_delete_modal = false; }
+        }
+
+        Rectangle {
+            width: min(440px, parent.width - 40px);
+            height: 180px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: #18191d;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #2e323e;
+            clip: true;
+
+            TouchArea {}
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                HorizontalLayout {
+                    spacing: 12px;
+
+                    Rectangle {
+                        width: 34px;
+                        height: 34px;
+                        border-radius: 6px;
+                        background: #ef444420;
+                        border-width: 1px;
+                        border-color: #ef444440;
+                        y: (parent.height - self.height) / 2;
+
+                        Image {
+                            source: @image-url("icons/trash.svg");
+                            width: 16px;
+                            height: 16px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            colorize: #ef4444;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: "Delete Mod from Storage?";
+                            color: #f9fafb;
+                            font-size: 15px;
+                            font-weight: 700;
+                        }
+
+                        Text {
+                            text: root.mod_to_delete;
+                            color: #ef4444;
+                            font-size: 12px;
+                            font-weight: 600;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Permanently deletes the archive from disk and removes active server symlinks.";
+                    color: #9ca3af;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: end;
+
+                    Button {
+                        text: "Cancel";
+                        clicked => { root.show_delete_modal = false; }
+                    }
+
+                    Rectangle {
+                        width: 110px;
+                        height: 32px;
+                        border-radius: 6px;
+                        background: del_confirm_touch.has-hover ? #dc2626 : #b91c1c;
+
+                        del_confirm_touch := TouchArea {
+                            clicked => {
+                                root.show_delete_modal = false;
+                                root.confirm_delete_mod(root.mod_to_delete);
+                            }
+                        }
+
+                        Text {
+                            text: "Delete Mod";
+                            color: #ffffff;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
                     }
                 }
